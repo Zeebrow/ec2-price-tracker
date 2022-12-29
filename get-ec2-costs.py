@@ -289,7 +289,7 @@ def select_aws_region_dropdown(region: str):
     raise Exception(f"No such region: '{region}'")
 
 @use_iframe
-def scrape_all_(region:str, os: str) -> List[Instance]:
+def scrape_all_(region:str, os: str, screen: MyScreen, screen_status_line: int) -> List[Instance]:
     """
     get all pages in iframe
     when finished searching, get number of pages.
@@ -304,6 +304,8 @@ def scrape_all_(region:str, os: str) -> List[Instance]:
     num_pages = pages[-2].find_element(By.TAG_NAME, 'button').text # last page number
 
     for i in range(int(num_pages)):
+        screen.set_line(screen_status_line, f"scraping page {i+1}/{num_pages}...")
+        screen.draw_screen()
         # only cycle to next page after it has been scraped
         if i > 0:
             arrow_button.click()
@@ -426,7 +428,7 @@ for o_num, _os in enumerate(tgt_operating_systems):
         screen.set_line(screen_regions_lines[region], f"\033[93m- {region}\033[0m")
         screen.set_line(status_line, f"scraping {region}...")
         screen.draw_screen()
-        stuff = scrape_all_(region=region, os=_os)
+        stuff = scrape_all_(region=region, os=_os, screen=screen, screen_status_line=status_line)
         t_region_scrape = ceil(time.time() - t_region_scrape_start)
         if len(stuff) != get_result_count_test():
             screen.set_line(screen_regions_lines[region], f"\033[94m- {region} BAD DATA: (*{len(stuff)}* instances in {t_region_scrape} sec)\033[0m")
@@ -455,7 +457,10 @@ for o_num, _os in enumerate(tgt_operating_systems):
         screen.draw_screen()
         # print(f"\033[36m{et} - processed {len(stuff)} {_os} ({o_num+1}/{len(tgt_operating_systems)}) instances for {region} ({r_num+1}/{len(tgt_regions)}) in {t_region_scrape} seconds.\033[0m")
 
+    screen.set_line(status_line, f"finished scraping {_os}")
     screen.set_line(screen_os_lines[_os], f"\033[92m- {_os}\033[0m")
+    for t, n in screen_regions_lines.items():
+        screen.set_line(n, f"- {t}")
     screen.draw_screen()
     ###########################
     # zip the csv files per os
