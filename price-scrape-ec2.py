@@ -8,8 +8,8 @@ from typing import List
 import shutil
 import zipfile
 import os
+import logging
 
-import boto3 
 from pyautogui import hotkey
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -28,6 +28,7 @@ Data for all regions (28) of a single operating system uses between 588K - 712K 
 # DWH_DATABASE = 'ec2-costs-dwh.db'
 # MAIN_TABLE_NAME = 'ec2_costs'
 t_prog_start = time.time()
+LOG_FILE = 'scrape_ec2.log' # None to supress log output
 OPERATING_SYSTEMS = None # 'None' to scrape ['Linux', 'Windows']
 REGIONS = None # 'None' to scrape all regions
 CSV_DATA_DIR = Path('csv-data/ec2')
@@ -37,6 +38,7 @@ WAIT_BETWEEN_COMMANDS = 1 #seconds
 URL = "https://aws.amazon.com/ec2/pricing/on-demand/"
 human_date = datetime.fromtimestamp(TIMESTAMP).strftime("%Y-%m-%d") # date -I
 
+TIMEZONE = 'EST' # for uploading to s3
 UPLOAD_BUCKET_REGION = 'us-east-1'
 UPLOAD_BUCKET_NAME = 'quickhost-pricing-data'
 AWS_PROFILE = 'quickhost-ci-admin'
@@ -52,29 +54,58 @@ AWS_PROFILE = 'quickhost-ci-admin'
 # dwh_tgt_table = dwh.new_dwh_table()
 
 ###############################################################################
-# init Firefox driver
+# init
 ###############################################################################
-# print("Some actions cannot be automated. please follow instructions as they are given.")
-# print("Please wait for the browser to zoom out before moving it or changing focus away from it.")
+print("Please wait for the browser to zoom out before moving it or changing focus away from it.")
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+logging.getLogger('selenium.*').setLevel(logging.ERROR)
+logging.getLogger('selenium.webdriver.remote.remote_connection').setLevel(logging.ERROR)
+logging.getLogger('urllib3').setLevel(logging.ERROR)
+formatter = logging.Formatter('%(asctime)s : %(levelname)s:%(name)s: %(message)s')
+if LOG_FILE:
+    fh = logging.FileHandler(LOG_FILE)
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+else:
+    logger.disabled = True
 options = webdriver.FirefoxOptions()
 options.binary_location = '/usr/bin/firefox-esr'
 driverService = Service('/usr/local/bin/geckodriver')
 driver = webdriver.Firefox(service=driverService, options=options)
 driver.get(URL)
-# print(f"beginning in {str(PAGE_LOAD_DELAY)} seconds...")
+logger.debug(f"beginning in {str(PAGE_LOAD_DELAY)} seconds...")
 time.sleep(PAGE_LOAD_DELAY)
-# print('starting program')
+logger.info("starting")
+
+logger.debug(f"{t_prog_start=}")
+logger.debug(f"{LOG_FILE=}")
+logger.debug(f"{OPERATING_SYSTEMS=}")
+logger.debug(f"{REGIONS=}")
+logger.debug(f"{CSV_DATA_DIR=}")
+logger.debug(f"{TIMESTAMP=}")
+logger.debug(f"{PAGE_LOAD_DELAY=}")
+logger.debug(f"{WAIT_BETWEEN_COMMANDS=}")
+logger.debug(f"{URL=}")
+logger.debug(f"{human_date=}")
+logger.debug(f"{UPLOAD_BUCKET_REGION=}")
+logger.debug(f"{UPLOAD_BUCKET_NAME=}")
+logger.debug(f"{AWS_PROFILE=}")
 
 ###############################################################################
 # classes and functions
 ###############################################################################
 class MyScreen:
-    PADDING_AMT = 3
+    PADDING_AMT = 4
     def __init__(self, w=None, h=None) -> None:
         self.w, self.h = os.get_terminal_size()
+        self._static_w = None
+        self._static_h = None
         if w is not None:
+            self._static_w = w
             self.w = int(w)
         if h is not None:
+            self._static_h = h
             self.h = int(h)
         self.lines = []
         for il in range(self.h):
@@ -82,15 +113,34 @@ class MyScreen:
             self.set_line(il, f"{il})...")
         self.draw_screen()
 
-    def set_line(self,lineno:int, msg: str):
-        self.lines[lineno] = msg + " "*(self.w - len(msg) - MyScreen.PADDING_AMT) + '\n'
+    def _get_term_size(self):
+        self.w, self.h = os.get_terminal_size()
+        if self._static_h:
+            self.h = self._static_h
+        if self._static_w:
+            self.w = self._static_w
 
+    def draw_line(self,lineno:int, msg: str):
+        self.set_line(lineno=lineno, msg=msg)
+        self.draw_screen()
+    def set_line(self,lineno:int, msg: str):
+        add_color_end = False
+        # if msg.endswith('\\033[0m'):
+        #     logger.debug(f"{add_color_end=}")
+        #     add_color_end = True
+        if len(msg) > self.w - MyScreen.PADDING_AMT:
+            logger.warning("message exceeds termsize and could ruin your day")
+            logger.debug(f"message len before trun: {len(msg)}")
+            msg = msg[:self.w - MyScreen.PADDING_AMT]
+            logger.debug(f"message len after trun: {len(msg)}")
+            msg += '\033[0m'
+            logger.debug(f"message len after color add: {len(msg)}")
+        self.lines[lineno] = msg 
     def clear(self):
         [print() for l in self.lines]
-
     def draw_screen(self):
         for l in self.lines:
-            print(''.join(l), end='')
+            print(''.join(l)+ " "*(self.w - len(l) - MyScreen.PADDING_AMT) + '\n', end='')
         for l in self.lines:
             print("\x1b[1A", end='')
 class Instance:
@@ -304,8 +354,8 @@ def scrape_all_(region:str, os: str, screen: MyScreen, screen_status_line: int) 
     num_pages = pages[-2].find_element(By.TAG_NAME, 'button').text # last page number
 
     for i in range(int(num_pages)):
-        screen.set_line(screen_status_line, f"scraping page {i+1}/{num_pages}...")
-        screen.draw_screen()
+        screen.draw_line(screen_status_line, f"scraping page {i+1}/{num_pages}...")
+
         # only cycle to next page after it has been scraped
         if i > 0:
             arrow_button.click()
@@ -339,15 +389,16 @@ def get_result_count_test() -> int:
     return int(t.split("of")[1].split(" available")[0].strip())
 
 def s3_upload(zipfile_dir: Path) -> int:
-    """returns number of files uploaded"""
-    session = boto3.Session(profile_name=AWS_PROFILE, region_name=UPLOAD_BUCKET_REGION)
-    s3 = session.client('s3')
-    rtn_file_ct = 0
-    for zipf in zipfile_dir.iterdir():
-        if zipf.name.endswith(".zip"):
-            s3.upload_file(str(zipf.relative_to('.')), UPLOAD_BUCKET_NAME, str(zipf.relative_to('.')))
-            rtn_file_ct += 1
-    return rtn_file_ct
+    """use runcom to avoid that nasty 73M boto3 dependency"""
+    pass
+    # session = boto3.Session(profile_name=AWS_PROFILE, region_name=UPLOAD_BUCKET_REGION)
+    # s3 = session.client('s3')
+    # rtn_file_ct = 0
+    # for zipf in zipfile_dir.iterdir():
+    #     if zipf.name.endswith(".zip"):
+    #         s3.upload_file(str(zipf.relative_to('.')), UPLOAD_BUCKET_NAME, str(zipf.relative_to('.')))
+    #         rtn_file_ct += 1
+    # return rtn_file_ct
 
 
 ###############################################################################
@@ -365,7 +416,7 @@ else:
 
 base_scrape_dir = Path(CSV_DATA_DIR / human_date)
 if base_scrape_dir.exists():
-    # print(f"Deleting old data in '{base_scrape_dir}'")
+    logger.warning(f"Deleting old data in '{base_scrape_dir}'")
     shutil.rmtree(base_scrape_dir)
 
 screen_os_lines = {}
@@ -380,36 +431,28 @@ for n, r in enumerate(tgt_regions):
 
 line_count = len(tgt_operating_systems) + len(tgt_regions) + 3 + 2
 screen = MyScreen(h=(len(tgt_operating_systems) + len(tgt_regions) + 3 + 2))
-screen.set_line(0, "Scraperdoodle")
-screen.set_line(1, "OS:")
+screen.draw_line(0, "Scraperdoodle")
+screen.draw_line(1, "OS:")
 for t, n in screen_os_lines.items():
-    screen.set_line(n, f"- {t}")
-screen.set_line(2+len(tgt_operating_systems), "Regions:")
+    screen.draw_line(n, f"- {t}")
+screen.draw_line(2+len(tgt_operating_systems), "Regions:")
 for t, n in screen_regions_lines.items():
-    screen.set_line(n, f"- {t}")
-screen.set_line(line_count-2, "")
-screen.set_line(line_count-1, "Status: starting...")
+    screen.draw_line(n, f"- {t}")
+screen.draw_line(line_count-2, "")
+screen.draw_line(line_count-1, "Status: starting...")
 status_line = line_count - 1
-screen.draw_screen()
+
 zoom_browser()
 nav_to(NavSection.ON_DEMAND_PRICING)
-
-# print()
-# print(f"Operating Systems ({len(tgt_operating_systems)}):")
-# [print(f"- {r}") for r in tgt_operating_systems]
-# print()
-# print(f"Regions ({len(tgt_regions)}):")
-# [print(f"- {r}") for r in tgt_regions]
-# print()
 
 total_instance_count = 0
 
 for o_num, _os in enumerate(tgt_operating_systems):
-    screen.set_line(status_line, f"setting operating system")
-    screen.draw_screen()
+    screen.draw_line(status_line, f"setting operating system")
+
     select_operating_system(_os)
-    screen.set_line(screen_os_lines[_os], f"\033[93m- {_os}\033[0m")
-    screen.draw_screen()
+    screen.draw_line(screen_os_lines[_os], f"\033[93m- {_os}\033[0m")
+
     # NOTE: this is where the directory structure is determined
     tgt_csv_data_dir = CSV_DATA_DIR / human_date / _os
     tgt_csv_data_dir.mkdir(parents=True, exist_ok=True)
@@ -421,22 +464,22 @@ for o_num, _os in enumerate(tgt_operating_systems):
         # NOTE: if the selected region was not visible in the drop-down menu at the time it was clicked,
         # the page seems to jump back to the top. Happened on ca-central-1. There are also fancy dividers
         # between some regions
-        screen.set_line(status_line, f"setting region to {region}")
-        screen.draw_screen()
+        screen.draw_line(status_line, f"setting region to {region}")
+
         select_aws_region_dropdown(region=region)
         t_region_scrape_start = time.time()
-        screen.set_line(screen_regions_lines[region], f"\033[93m- {region}\033[0m")
-        screen.set_line(status_line, f"scraping {region}...")
-        screen.draw_screen()
+        screen.draw_line(screen_regions_lines[region], f"\033[93m- {region}\033[0m")
+        screen.draw_line(status_line, f"scraping {region}...")
+
         stuff = scrape_all_(region=region, os=_os, screen=screen, screen_status_line=status_line)
         t_region_scrape = ceil(time.time() - t_region_scrape_start)
         if len(stuff) != get_result_count_test():
-            screen.set_line(screen_regions_lines[region], f"\033[94m- {region} BAD DATA: (*{len(stuff)}* instances in {t_region_scrape} sec)\033[0m")
-        #     print("\033[31mWARNING: possibly got bad data - make sure every thing in the 'On-Demand Plans for EC2' section is visible, and rerun\033[0m")
+            screen.draw_line(screen_regions_lines[region], f"\033[94m- {region} BAD DATA: (*{len(stuff)}* instances in {t_region_scrape} sec)\033[0m")
+            logger.warning("WARNING: possibly got bad data - make sure every thing in the 'On-Demand Plans for EC2' section is visible, and rerun")
         total_instance_count += len(stuff)
-        screen.set_line(screen_regions_lines[region], f"\033[93m- {region} ({len(stuff)} instances in {t_region_scrape} sec)\033[0m")
-        screen.set_line(status_line, f"writing csv data...")
-        screen.draw_screen()
+        screen.draw_line(screen_regions_lines[region], f"\033[93m- {region} ({len(stuff)} instances in {t_region_scrape} sec)\033[0m")
+        screen.draw_line(status_line, f"writing csv data...")
+
         f = tgt_csv_data_dir / f"{region}.csv"
         with f.open('w') as cf:
             fieldnames = Instance.get_csv_fields()
@@ -452,16 +495,14 @@ for o_num, _os in enumerate(tgt_operating_systems):
                 writer.writerow(row)
         _et = ceil(time.time() - t_prog_start)
         et = f"{floor(_et/60)}:{_et%60:02}"
-        screen.set_line(screen_regions_lines[region], f"\033[92m- {region} ({len(stuff)} instances in {t_region_scrape} sec) (saved to file '{f.relative_to('.')}')\033[0m")
-        screen.set_line(status_line, f"finished scraping {region}")
-        screen.draw_screen()
-        # print(f"\033[36m{et} - processed {len(stuff)} {_os} ({o_num+1}/{len(tgt_operating_systems)}) instances for {region} ({r_num+1}/{len(tgt_regions)}) in {t_region_scrape} seconds.\033[0m")
+        screen.draw_line(screen_regions_lines[region], f"\033[92m- {region} ({len(stuff)} instances in {t_region_scrape} sec) (saved to file '{f.relative_to('.')}')\033[0m")
+        screen.draw_line(status_line, f"finished scraping {region}")
+        logger.info(f"{et} - processed {len(stuff)} {_os} ({o_num+1}/{len(tgt_operating_systems)}) instances for {region} ({r_num+1}/{len(tgt_regions)}) in {t_region_scrape} seconds.")
 
-    screen.set_line(status_line, f"finished scraping {_os}")
-    screen.set_line(screen_os_lines[_os], f"\033[92m- {_os}\033[0m")
+    screen.draw_line(status_line, f"finished scraping {_os}")
+    screen.draw_line(screen_os_lines[_os], f"\033[92m- {_os}\033[0m")
     for t, n in screen_regions_lines.items():
-        screen.set_line(n, f"- {t}")
-    screen.draw_screen()
+        screen.draw_line(n, f"- {t}")
     ###########################
     # zip the csv files per os
     ###########################
@@ -469,17 +510,16 @@ for o_num, _os in enumerate(tgt_operating_systems):
     with zipfile.ZipFile(str(base_scrape_dir / zip_archive), 'w', compression=zipfile.ZIP_BZIP2) as zf:
         for csv_file in tgt_csv_data_dir.iterdir():
             zf.write(csv_file.relative_to('.'))
-    # print(f"Compressed data: {str(base_scrape_dir/zip_archive)}")
+    logger.info(f"Compressed data stored: {str(base_scrape_dir/zip_archive)}")
 
 screen.clear()
 ###########################
 # upload zips to s3
 ###########################
-num_files_uploaded = s3_upload(base_scrape_dir)
-# print(f"\033[92mUploaded {num_files_uploaded} files to s3 bucket '{UPLOAD_BUCKET_NAME} ({UPLOAD_BUCKET_REGION})'\033[0m")
+# num_files_uploaded = s3_upload(base_scrape_dir)
+# logger.info(f"Uploaded {num_files_uploaded} files to s3 bucket '{UPLOAD_BUCKET_NAME} ({UPLOAD_BUCKET_REGION})'")
 
 t_prog_end = ceil(time.time() - t_prog_start)
 driver.close()
-# print()
-# print(f"\033[92mProgram finished in {t_prog_end} seconds\033[0m")
-# print(f"\033[36m{total_instance_count} instances were scraped for {len(tgt_operating_systems)} operating systems in {len(tgt_regions)} regions.\033[0m")
+logger.info(f"Program finished in {t_prog_end} seconds")
+logger.info(f"{total_instance_count} instances were scraped for {len(tgt_operating_systems)} operating systems in {len(tgt_regions)} regions.")
