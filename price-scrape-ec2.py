@@ -10,13 +10,14 @@ import zipfile
 import os
 import logging
 from dataclasses import dataclass
-import argparse
 
 from pyautogui import hotkey
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.firefox.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as ec
 from selenium import webdriver
 
 """
@@ -226,12 +227,14 @@ class EC2Scraper:
         options.binary_location = '/usr/bin/firefox-esr'
         driverService = Service('/usr/local/bin/geckodriver')
         self.driver = webdriver.Firefox(service=driverService, options=options)
+        self.waiter = WebDriverWait(self.driver, 5)
         self.driver.get(self.url)
         logger.debug(f"beginning in {str(self.page_load_delay)} seconds...")
         time.sleep(self.page_load_delay)
-        logger.info("starting")
         self.iframe = self.driver.find_element('id', "iFrameResizer0")
-
+        self.nav_to(self.NavSection.ON_DEMAND_PRICING)
+        self.zoom_browser()
+        logger.info("finished init")
         logger.debug(f"{self.t_prog_start=}")
         logger.debug(f"{self.log_file=}")
         logger.debug(f"{self.csv_data_dir=}")
@@ -244,14 +247,28 @@ class EC2Scraper:
         logger.debug(f"{self.upload_bucket_name=}")
         logger.debug(f"{self.aws_profile=}")
 
+    @classmethod
+    def zoom_browser_cm(self):
+        for _ in range(6):
+            hotkey('ctrl', '-')
+        time.sleep(0.5)
+
     def zoom_browser(self):
-        hotkey('ctrl', '-')
-        hotkey('ctrl', '-')
-        hotkey('ctrl', '-')
-        hotkey('ctrl', '-')
-        hotkey('ctrl', '-')
-        hotkey('ctrl', '-')
-        time.sleep(3)
+        for _ in range(6):
+            hotkey('ctrl', '-')
+        time.sleep(2)
+
+    @classmethod
+    def nav_to_cm(self, driver: webdriver, section: NavSection):
+        """select a section to mimic scrolling"""
+        sidebar = driver.find_element(By.CLASS_NAME, 'lb-sidebar-content')
+        for elem in sidebar.find_elements(By.XPATH, 'div/a'):
+            if elem.text.strip() == section:
+                elem.click()
+                # wait for fancy scroll
+                time.sleep(1)
+                return
+        raise Exception(f"no such section '{section}'")
 
     def nav_to(self, section: NavSection):
         """select a section to mimic scrolling"""
@@ -259,7 +276,8 @@ class EC2Scraper:
         for elem in sidebar.find_elements(By.XPATH, 'div/a'):
             if elem.text.strip() == section:
                 elem.click()
-                time.sleep(self.wait_between_commands)
+                # wait for fancy scroll
+                time.sleep(2)
                 return
         raise Exception(f"no such section '{section}'")
 
@@ -269,12 +287,11 @@ class EC2Scraper:
         available_operating_systems = []
         os_selection_box = self.driver.find_element(By.ID, 'awsui-select-2')
         os_selection_box.click()
-        time.sleep(self.wait_between_commands)
         for elem in self.driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
             available_operating_systems.append(elem.text)
         # collapse
         os_selection_box.click()
-        time.sleep(self.wait_between_commands)
+        self.wait_for_menus_to_close()
         self.driver.switch_to.default_content()
         return available_operating_systems
         
@@ -283,15 +300,49 @@ class EC2Scraper:
         self.driver.switch_to.frame(self.iframe)
         os_selection_box = self.driver.find_element(By.ID, 'awsui-select-2')
         os_selection_box.click()
-        time.sleep(self.wait_between_commands)
         for elem in self.driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
             if elem.text == os:
                 elem.click()
-                time.sleep(self.wait_between_commands)
+                self.wait_for_menus_to_close()
                 self.driver.switch_to.default_content()
                 return
         self.driver.switch_to.default_content()
         raise Exception(f"No such operating system: '{os}'")
+
+    @classmethod
+    def get_available_regions_and_os(self, config: Config) -> List[str]:
+        options = webdriver.FirefoxOptions()
+        options.binary_location = '/usr/bin/firefox-esr'
+        driverService = Service('/usr/local/bin/geckodriver')
+        driver = webdriver.Firefox(service=driverService, options=options)
+        driver.get(config.url)
+        logger.debug(f"beginning in {str(config.page_load_delay)} seconds...")
+        time.sleep(config.page_load_delay)
+        iframe = driver.find_element('id', "iFrameResizer0")
+        EC2Scraper.nav_to_cm(driver, EC2Scraper.NavSection.ON_DEMAND_PRICING)
+        EC2Scraper.zoom_browser_cm()
+        driver.switch_to.frame(iframe)
+        #########
+        # Regions
+        #########
+        available_regions = []
+        region_selection_box = driver.find_element('id', 'awsui-select-1-textbox')
+        region_selection_box.click()
+        for elem in driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
+            available_regions.append(elem.text)
+        region_selection_box.click()
+        #########
+        # OS
+        #########
+        available_operating_systems = []
+        os_selection_box = driver.find_element(By.ID, 'awsui-select-2')
+        os_selection_box.click()
+        for elem in driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
+            available_operating_systems.append(elem.text)
+        # collapse
+        os_selection_box.click()
+        driver.close()
+        return (available_operating_systems, available_regions)
 
     def get_available_regions(self) -> List[str]:
         """get all aws regions for filtering data"""
@@ -303,7 +354,7 @@ class EC2Scraper:
         for elem in self.driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
             available_regions.append(elem.text)
         region_selection_box.click()
-        time.sleep(self.wait_between_commands)
+        self.wait_for_menus_to_close()
         self.driver.switch_to.default_content()
         return available_regions
 
@@ -315,27 +366,26 @@ class EC2Scraper:
         ################
         location_type_select_box = self.driver.find_element(By.ID, 'awsui-select-0')
         location_type_select_box.click()
-        time.sleep(self.wait_between_commands)
+        self.wait_for_menus_to_close()
+        logger.debug("select region waiter start")
 
         # what you have to click firt in order to show the dropdown 
         filter_selection = 'AWS Region'
         all_filter_options = self.driver.find_element(By.ID, 'awsui-select-0-dropdown')
         all_filter_options.find_element(By.XPATH, f'//*[ text() = "{filter_selection}"]').click()
-        time.sleep(self.wait_between_commands)
+        self.wait_for_menus_to_close()
         
         ################
         # Region
         ################
         region_select_box = self.driver.find_element(By.ID, 'awsui-select-1-textbox')
         region_select_box.click()
-        time.sleep(self.wait_between_commands)
         search_box = self.driver.find_element(By.ID, 'awsui-input-0')
         search_box.send_keys(region)
-        time.sleep(self.wait_between_commands)
         for elem in self.driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
             if elem.text == region:
                 elem.click()
-                time.sleep(self.wait_between_commands)
+                self.wait_for_menus_to_close()
                 self.driver.switch_to.default_content()
                 return
         self.driver.switch_to.default_content()
@@ -352,7 +402,6 @@ class EC2Scraper:
         # page numbers (1, 2, 3, (literal)..., last, >)
         pages = self.driver.find_element(By.CLASS_NAME, 'awsui-table-pagination-content').find_elements(By.TAG_NAME, "li")
         pages[1].click() # make sure were on page 1 when this function is run more than once
-        time.sleep(self.wait_between_commands)
         arrow_button = pages[-1] # >
         num_pages = pages[-2].find_element(By.TAG_NAME, 'button').text # last page number
 
@@ -361,7 +410,6 @@ class EC2Scraper:
             # only cycle to next page after it has been scraped
             if i > 0:
                 arrow_button.click()
-                time.sleep(0.1)
             selection = self.driver.find_element(By.TAG_NAME, 'tbody')
             # rows in HTML table
             tr_tags = selection.find_elements(By.TAG_NAME, 'tr')
@@ -391,6 +439,20 @@ class EC2Scraper:
         # ¯\_(ツ)_/¯
         self.driver.switch_to.default_content()
         return int(t.split("of")[1].split(" available")[0].strip())
+
+    def wait_for_menus_to_close(self):
+        _t = time.time()
+        # vCPU selection box
+        self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='vCPU_single']")))
+        # Instance Type selection box
+        self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='plc:InstanceFamily_single']")))
+        # Operating System selection box
+        self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='plc:OperatingSystem_single']")))
+        # instance search bar
+        self.waiter.until(ec.visibility_of_element_located((By.ID, "awsui-input-1")))
+        # instance search paginator
+        self.waiter.until(ec.visibility_of_element_located((By.TAG_NAME, "awsui-table-pagination")))
+        logger.debug(f"waited {time.time() - _t:.3f} sec")
 
     def run(self, tgt_regions=None, tgt_operating_systems=None):
         """
@@ -526,7 +588,7 @@ if __name__ == '__main__':
     logging.getLogger('selenium.*').setLevel(logging.ERROR)
     logging.getLogger('selenium.webdriver.remote.remote_connection').setLevel(logging.ERROR)
     logging.getLogger('urllib3').setLevel(logging.ERROR)
-    formatter = logging.Formatter('%(asctime)s : %(levelname)s:%(name)s: %(message)s')
+    formatter = logging.Formatter('%(asctime)s : %(funcName)s : %(levelname)s : %(name)s : %(message)s')
     if LOG_FILE:
         fh = logging.FileHandler(LOG_FILE)
         fh.setFormatter(formatter)
@@ -546,5 +608,12 @@ if __name__ == '__main__':
         upload_bucket_name = UPLOAD_BUCKET_NAME,
         aws_profile = AWS_PROFILE,
     )
-    scraper = EC2Scraper(config)
-    scraper.run()
+    scrapers = []
+    regions = EC2Scraper.get_available_regions_and_os(config)
+    print(regions)
+    exit()
+    for scrpr in range(2):
+        scraper = EC2Scraper(config)
+        scrapers.append(scraper)
+    for scrpr in scrapers:
+        scraper.run()
