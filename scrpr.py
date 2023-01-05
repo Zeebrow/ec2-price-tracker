@@ -10,8 +10,9 @@ import zipfile
 import os
 import logging
 from dataclasses import dataclass
-
-import concurrent.futures
+from copy import copy
+import threading
+import argparse
 
 from pyautogui import hotkey
 from selenium.webdriver.common.by import By
@@ -21,6 +22,7 @@ from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as ec
 from selenium import webdriver
+import selenium.common.exceptions
 
 """
 Scrapes pricing information for EC2 instance types for available regions.
@@ -29,11 +31,9 @@ Data for all regions (28) of a single operating system uses between 588K - 712K 
 logger = logging.getLogger(__name__)
 
 ###############################################################################
-# globals, constants
+# classes and functions
 ###############################################################################
-# DATABASE = 'ec2-costs.db'
-# DWH_DATABASE = 'ec2-costs-dwh.db'
-# MAIN_TABLE_NAME = 'ec2_costs'
+human_date: str = lambda ts: datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
 
 @dataclass
 class Config:
@@ -48,22 +48,17 @@ class Config:
     upload_bucket_name: str = 'quickhost-pricing-data'
     aws_profile: str = 'quickhost-ci-admin'
     t_prog_start: float = time.time()
-    human_date: str = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d") # date -I
+    human_date = human_date(timestamp)
 
-###############################################################################
-# set up storage
-###############################################################################
-# db = EC2CostsDatabase(db_name=DATABASE, main_table_name=MAIN_TABLE_NAME)
-# dwh = EC2CostsDWH(ts=TIMESTAMP, dwh_db_name=DWH_DATABASE, dwh_main_table_name=MAIN_TABLE_NAME)
-# db.nuke_tables()
-# db.create_tables()
-# dwh.create_tables()
-# dwh_tgt_table = dwh.new_dwh_table()
+def time_me(f):
+    def _timer(*args, **kwargs):
+        t_i = time.time()
+        f(*args, **kwargs)
+        logger.debug(f"function {f.__name__} ET: {time.time() - t_i}s")
+    return _timer
 
-###############################################################################
-# classes and functions
-###############################################################################
-seconds_to_timer = lambda x: f"{floor(x/60)}m:{x%60:02}s"
+seconds_to_timer = lambda x: f"{floor(x/60)}m:{x%60:.2f}s ({x} seconds)"
+
 class MyScreen:
     """neato way to show what is going on in program"""
     PADDING_AMT = 1
@@ -82,14 +77,12 @@ class MyScreen:
             self.lines.append([])
             self.set_line(il, f"{il})...")
         self.draw_screen()
-
     def _get_term_size(self):
         self.w, self.h = os.get_terminal_size()
         if self._static_h:
             self.h = self._static_h
         if self._static_w:
             self.w = self._static_w
-
     def draw_line(self,lineno:int, msg: str):
         self.set_line(lineno=lineno, msg=msg)
         self.draw_screen()
@@ -103,13 +96,12 @@ class MyScreen:
             logger.debug(f"message len after color add: {len(msg)}")
         self.lines[lineno] = msg 
     def clear(self):
-        [print() for l in self.lines]
+        [print() for _ in self.lines]
     def draw_screen(self):
         for l in self.lines:
             print(''.join(l)+ " "*(self.w - len(l) - MyScreen.PADDING_AMT) + '\n', end='')
         for l in self.lines:
             print("\x1b[1A", end='')
-
 
 class Instance:
     def __init__(self, region: str, operating_system:str, instance_type: str , cost_per_hr:str , cpu_ct:str , ram_size:str , storage_type:str , network_throughput: str) -> None:
@@ -121,33 +113,10 @@ class Instance:
         self.ram_size = ram_size
         self.storage_type = storage_type
         self.network_throughput = network_throughput
-        self.split_instance_type()
+
     def __repr__(self) -> str:
         return f"{self.instance_type} {self.operating_system} {self.region}"
-    def split_instance_type(self):
-        x, self.instance_size = self.instance_type.split(".")
-        self.instance_family = x[0]
-        self.instance_generation = x[1]
-        self.instance_attributes = None
-        if len(x) > 2:
-            self.instance_attributes = x[2:]
 
-    @classmethod
-    def get_instance_details_fields(self):
-        return [
-            "instance_type",
-            "instance_size",
-            "instance_family",
-            "instance_generation",
-            "instance_attributes",
-            "operating_system",
-            "region",
-            "cost_per_hr",
-            "cpu_ct",
-            "ram_size_gb",
-            "storage_type",
-            "network_throughput",
-        ]
     @classmethod
     def get_csv_fields(self):
         return [
@@ -160,22 +129,6 @@ class Instance:
             "storage_type",
             "network_throughput"
         ]
-
-    def instance_details_dict(self):
-        return {
-            "instance_type": self.instance_type,
-            "instance_size": self.instance_size,
-            "instance_family": self.instance_family,
-            "instance_generation": self.instance_generation,
-            "instance_attributes": self.instance_attributes,
-            "operating_system": self.operating_system,
-            "region": self.region,
-            "cost_per_hr": self.cost_per_hr,
-            "cpu_ct": self.cpu_ct,
-            "ram_size_gb": self.ram_size,
-            "storage_type": self.storage_type,
-            "network_throughput": self.network_throughput,
-        }
     def as_dict(self):
         return {
             "instance_type": self.instance_type,
@@ -188,6 +141,46 @@ class Instance:
             "network_throughput": self.network_throughput,
         }
 
+class ThreadDivvier:
+    """
+    Starts scraping using `thread_count` number of Selenium drivers
+    """
+    def __init__(self, config: Config, thread_count=2) -> None:
+        logger.debug("init ThreadDivvier")
+        self.thread_count = thread_count
+        self.drivers: List[EC2Scraper] = []
+        self.done = False
+        next_id = 0
+        for _ in range(thread_count):
+            driver = EC2Scraper(_id=next_id, config=config)
+            next_id += 1
+            self.drivers.append(driver)
+
+    def run_threads(self, arg_queue: List[tuple]):
+        logger.info(f"starting with {self.thread_count} threads")
+        _arg_queue = copy(arg_queue)
+        while _arg_queue:
+            for d in self.drivers:
+                if not d.lock.locked():
+                    try:
+                        args = _arg_queue.pop()
+                    except IndexError:
+                        logger.warning(f"driver {d._id} tried to pop from an empty queue")
+                        # break
+                        continue
+
+                    logger.debug(f"{len(_arg_queue)} left in queue")
+                    t = threading.Thread(name='-'.join(args), target=d.scrape_and_store, args=args, daemon=False)
+                    t.start()
+                    logger.debug(f"worker id {d._id} running new thread {'-'.join(args)}")
+        # determine when all threads have finished
+        threads_finished = []
+        logger.debug("waiting for last threads to finish juuuust a sec")
+        while len(threads_finished) != self.thread_count:
+            for d in self.drivers:
+                if not d.lock.locked() and d._id not in threads_finished:
+                    threads_finished.append(d._id)
+                    d.driver.close()
 
 class EC2Scraper:
 
@@ -206,7 +199,12 @@ class EC2Scraper:
         AMAZON_EC2_AUTO_SCALING = "Amazon EC2 Auto Scaling"
         AWS_GOVCLOUD_REGION = "AWS GovCloud Region"
 
-    def __init__(self, config: Config):
+    @time_me
+    def __init__(self, _id, config: Config):
+        logger.debug("init EC2 Scraper")
+        self.lock = threading.Lock()
+        self.lock.acquire()
+        self._id = _id
         ###################################################
         # config
         ###################################################
@@ -225,349 +223,435 @@ class EC2Scraper:
         self.upload_bucket_name = config.upload_bucket_name
         self.aws_profile = config.aws_profile
 
-        print("Please wait for the browser to zoom out before moving it or changing focus away from it.")
-        options = webdriver.FirefoxOptions()
-        options.binary_location = '/usr/bin/firefox-esr'
-        driverService = Service('/usr/local/bin/geckodriver')
-        self.driver = webdriver.Firefox(service=driverService, options=options)
-        self.waiter = WebDriverWait(self.driver, 5)
-        self.driver.get(self.url)
-        logger.debug(f"beginning in {str(self.page_load_delay)} seconds...")
-        time.sleep(self.page_load_delay)
-        self.iframe = self.driver.find_element('id', "iFrameResizer0")
-        self.nav_to(self.NavSection.ON_DEMAND_PRICING)
-        self.zoom_browser()
-        logger.info("finished init")
-        logger.debug(f"{self.t_prog_start=}")
-        logger.debug(f"{self.log_file=}")
-        logger.debug(f"{self.csv_data_dir=}")
-        logger.debug(f"{self.timestamp=}")
-        logger.debug(f"{self.page_load_delay=}")
-        logger.debug(f"{self.wait_between_commands=}")
-        logger.debug(f"{self.url=}")
-        logger.debug(f"{self.human_date=}")
-        logger.debug(f"{self.upload_bucket_region=}")
-        logger.debug(f"{self.upload_bucket_name=}")
-        logger.debug(f"{self.aws_profile=}")
+        try: 
+            options = webdriver.FirefoxOptions()
+            options.binary_location = '/usr/bin/firefox-esr'
+            options.headless = True
+            driverService = Service('/usr/local/bin/geckodriver')
+            self.driver = webdriver.Firefox(service=driverService, options=options)
+            self.waiter = WebDriverWait(self.driver, 10)
+            self.driver.get(self.url)
+            logger.debug(f"beginning in {str(self.page_load_delay)} seconds...")
+            self.nav_to(self.NavSection.ON_DEMAND_PRICING)
+            self.waiter.until(ec.visibility_of_element_located((By.ID, "iFrameResizer0")))
+            self.iframe = self.driver.find_element('id', "iFrameResizer0")
+            logger.info("finished init")
+            self.lock.release()
+        except Exception as e:
+            logger.critical(e)
+            self.driver.close()
 
     @classmethod
     def zoom_browser_cm(self):
+        logger.debug("begin zoom broweser")
         for _ in range(6):
             hotkey('ctrl', '-')
         time.sleep(0.5)
 
     def zoom_browser(self):
+        logger.debug("begin zoom broweser")
         for _ in range(6):
             hotkey('ctrl', '-')
         time.sleep(2)
 
     @classmethod
-    def nav_to_cm(self, driver: webdriver, section: NavSection):
+    def nav_to_cm(self, driver: webdriver.Firefox, section: NavSection):
+        logger.debug("begin nav_to")
         """select a section to mimic scrolling"""
-        sidebar = driver.find_element(By.CLASS_NAME, 'lb-sidebar-content')
-        for elem in sidebar.find_elements(By.XPATH, 'div/a'):
-            if elem.text.strip() == section:
-                elem.click()
-                # wait for fancy scroll
-                time.sleep(1)
-                return
+        try:
+            sidebar = driver.find_element(By.CLASS_NAME, 'lb-sidebar-content')
+            for elem in sidebar.find_elements(By.XPATH, 'div/a'):
+                if elem.text.strip() == section:
+                    elem.click()
+                    # wait for fancy scroll
+                    time.sleep(1)
+                    return
+        except Exception as e:
+            driver.close()
+            logger.error(e)
+            raise e
         raise Exception(f"no such section '{section}'")
 
     def nav_to(self, section: NavSection):
         """select a section to mimic scrolling"""
-        sidebar = self.driver.find_element(By.CLASS_NAME, 'lb-sidebar-content')
-        for elem in sidebar.find_elements(By.XPATH, 'div/a'):
-            if elem.text.strip() == section:
-                elem.click()
-                # wait for fancy scroll
-                time.sleep(2)
-                return
+        logger.debug("begin nav_to")
+        try: 
+            sidebar = self.driver.find_element(By.CLASS_NAME, 'lb-sidebar-content')
+            for elem in sidebar.find_elements(By.XPATH, 'div/a'):
+                if elem.text.strip() == section:
+                    elem.click()
+                    # wait for fancy scroll
+                    time.sleep(2)
+                    return
+        except Exception as e:
+            self.driver.close()
+            logger.error(e)
+            raise e
         raise Exception(f"no such section '{section}'")
 
     def get_available_operating_systems(self) -> List[str]:
         """get all operating systems for filtering data"""
-        self.driver.switch_to.frame(self.iframe)
-        available_operating_systems = []
-        os_selection_box = self.driver.find_element(By.ID, 'awsui-select-2')
-        os_selection_box.click()
-        for elem in self.driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
-            available_operating_systems.append(elem.text)
-        # collapse
-        os_selection_box.click()
-        self.wait_for_menus_to_close()
-        self.driver.switch_to.default_content()
+        logger.debug(f"{self._id} get available os")
+        try:
+            self.driver.switch_to.frame(self.iframe)
+            available_operating_systems = []
+            os_selection_box = self.driver.find_element(By.ID, 'awsui-select-2')
+            os_selection_box.click()
+            for elem in self.driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
+                available_operating_systems.append(elem.text)
+            # collapse
+            os_selection_box.click()
+            self.wait_for_menus_to_close()
+            self.driver.switch_to.default_content()
+        except Exception as e:
+            self.driver.close()
+            logger.error(e)
+            raise e
         return available_operating_systems
         
     def select_operating_system(self, _os: str):
         """select an operating system for filtering data"""
-        self.driver.switch_to.frame(self.iframe)
-        os_selection_box = self.driver.find_element(By.ID, 'awsui-select-2')
-        os_selection_box.click()
-        for elem in self.driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
-            if elem.text == _os:
-                elem.click()
-                self.wait_for_menus_to_close()
-                self.driver.switch_to.default_content()
-                return
-        self.driver.switch_to.default_content()
+        logger.debug(f"{self._id} select os {_os}")
+        try:
+            self.driver.switch_to.frame(self.iframe)
+            os_selection_box = self.driver.find_element(By.ID, 'awsui-select-2')
+            os_selection_box.click()
+            for elem in self.driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
+                if elem.text == _os:
+                    elem.click()
+                    self.wait_for_menus_to_close()
+                    self.driver.switch_to.default_content()
+                    return
+            self.driver.switch_to.default_content()
+        except Exception as e:
+            self.driver.close()
+            logger.error(e)
+            raise e
         raise Exception(f"No such operating system: '{_os}'")
 
     @classmethod
     def get_available_regions_and_os(self, config: Config) -> List[str]:
+        results = {}
+        #@@@ what if a region is not available for a particular OS?
+        logger.debug(f"get regions and os")
         options = webdriver.FirefoxOptions()
         options.binary_location = '/usr/bin/firefox-esr'
+        options.headless = True
         driverService = Service('/usr/local/bin/geckodriver')
         driver = webdriver.Firefox(service=driverService, options=options)
-        driver.get(config.url)
-        logger.debug(f"beginning in {str(config.page_load_delay)} seconds...")
-        time.sleep(config.page_load_delay)
-        iframe = driver.find_element('id', "iFrameResizer0")
-        EC2Scraper.nav_to_cm(driver, EC2Scraper.NavSection.ON_DEMAND_PRICING)
-        EC2Scraper.zoom_browser_cm()
-        driver.switch_to.frame(iframe)
-        #########
-        # Regions
-        #########
-        available_regions = []
-        region_selection_box = driver.find_element('id', 'awsui-select-1-textbox')
-        region_selection_box.click()
-        for elem in driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
-            available_regions.append(elem.text)
-        region_selection_box.click()
-        #########
-        # OS
-        #########
-        available_operating_systems = []
-        os_selection_box = driver.find_element(By.ID, 'awsui-select-2')
-        os_selection_box.click()
-        for elem in driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
-            available_operating_systems.append(elem.text)
-        # collapse
-        os_selection_box.click()
-        driver.close()
+        try:
+            driver.get(config.url)
+            logger.debug(f"beginning in {str(config.page_load_delay)} seconds...")
+            time.sleep(config.page_load_delay)
+            iframe = driver.find_element('id', "iFrameResizer0")
+            EC2Scraper.nav_to_cm(driver, EC2Scraper.NavSection.ON_DEMAND_PRICING)
+            # EC2Scraper.zoom_browser_cm()
+            driver.switch_to.frame(iframe)
+
+            #########
+            # OS
+            #########
+            available_operating_systems = []
+            os_selection_box = driver.find_element(By.ID, 'awsui-select-2')
+            os_selection_box.click()
+            for elem in driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
+                available_operating_systems.append(elem.text)
+                results[elem.text] = []
+            # collapse
+            os_selection_box.click()
+
+            #########
+            # Regions
+            #########
+            ## region_selection_box = driver.find_element('id', 'awsui-select-1-textbox')
+            # logger.debug("checking for os availability per region")
+            # for _os in available_operating_systems:
+            #     os_selection_box.click()
+            #     #@@@
+            #     os_selection_box.click()
+            #     for os_elem in driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
+            #         if os_elem.text == _os:
+            #             os_elem.click()
+            ##             region_selection_box.click()
+            #             for region_elem in driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
+            #                 results[_os].append(region_elem.text)
+            # for _os in results.keys():
+            #     logger.debug(f"{len(results[_os])} regions for os '{_os}'")
+            available_regions = []
+            region_selection_box = driver.find_element('id', 'awsui-select-1-textbox')
+            region_selection_box.click()
+            for elem in driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
+                available_regions.append(elem.text)
+            region_selection_box.click()
+        finally:
+            driver.close()
+        logger.debug(f"found {len(available_operating_systems)} operating systems and {len(available_regions)} regions")
         return (available_operating_systems, available_regions)
 
     def get_available_regions(self) -> List[str]:
         """get all aws regions for filtering data"""
-        self.driver.switch_to.frame(self.iframe)
-        available_regions = []
-        region_selection_box = self.driver.find_element('id', 'awsui-select-1-textbox')
-        region_selection_box.click()
-        time.sleep(self.wait_between_commands)
-        for elem in self.driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
-            available_regions.append(elem.text)
-        region_selection_box.click()
-        self.wait_for_menus_to_close()
-        self.driver.switch_to.default_content()
+        logger.debug(f"{self._id} get regions")
+        try:
+            self.driver.switch_to.frame(self.iframe)
+            available_regions = []
+            region_selection_box = self.driver.find_element('id', 'awsui-select-1-textbox')
+            region_selection_box.click()
+            time.sleep(self.wait_between_commands)
+            for elem in self.driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
+                available_regions.append(elem.text)
+            region_selection_box.click()
+            self.wait_for_menus_to_close()
+            self.driver.switch_to.default_content()
+        except Exception as e:
+            self.driver.close()
+            logger.error(e)
+            raise e
         return available_regions
 
     def select_aws_region_dropdown(self, region: str):
         """Set the table of data to display for a given aws region"""
-        self.driver.switch_to.frame(self.iframe)
-        ################
-        # Location Type
-        ################
-        location_type_select_box = self.driver.find_element(By.ID, 'awsui-select-0')
-        location_type_select_box.click()
-        self.wait_for_menus_to_close()
-        logger.debug("select region waiter start")
+        logger.debug(f"{self._id} select region '{region}'")
+        try:
+            self.driver.switch_to.frame(self.iframe)
+            ################
+            # Location Type
+            ################
+            location_type_select_box = self.driver.find_element(By.ID, 'awsui-select-0')
+            location_type_select_box.click()
+            self.wait_for_menus_to_close()
 
-        # what you have to click firt in order to show the dropdown 
-        filter_selection = 'AWS Region'
-        all_filter_options = self.driver.find_element(By.ID, 'awsui-select-0-dropdown')
-        all_filter_options.find_element(By.XPATH, f'//*[ text() = "{filter_selection}"]').click()
-        self.wait_for_menus_to_close()
-        
-        ################
-        # Region
-        ################
-        region_select_box = self.driver.find_element(By.ID, 'awsui-select-1-textbox')
-        region_select_box.click()
-        search_box = self.driver.find_element(By.ID, 'awsui-input-0')
-        search_box.send_keys(region)
-        for elem in self.driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
-            if elem.text == region:
-                elem.click()
-                self.wait_for_menus_to_close()
-                self.driver.switch_to.default_content()
-                return
-        self.driver.switch_to.default_content()
+            # what you have to click firt in order to show the dropdown 
+            filter_selection = 'AWS Region'
+            all_filter_options = self.driver.find_element(By.ID, 'awsui-select-0-dropdown')
+            all_filter_options.find_element(By.XPATH, f'//*[ text() = "{filter_selection}"]').click()
+            self.wait_for_menus_to_close()
+            
+            ################
+            # Region
+            ################
+            region_select_box = self.driver.find_element(By.ID, 'awsui-select-1-textbox')
+            region_select_box.click()
+            search_box = self.driver.find_element(By.ID, 'awsui-input-0')
+            search_box.send_keys(region)
+            for elem in self.driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
+                if elem.text == region:
+                    elem.click()
+                    self.wait_for_menus_to_close()
+                    self.driver.switch_to.default_content()
+                    return
+            self.driver.switch_to.default_content()
+        except Exception as e:
+            self.driver.close()
+            logger.error(e)
+            raise e
         raise Exception(f"No such region: '{region}'")
 
-    def scrape_all_(self, region:str, _os: str, screen: MyScreen, screen_status_line: int) -> List[Instance]:
+    def scrape_and_store(self, _os: str, region:str) -> List[Instance]:
         """
         get all pages in iframe
         when finished searching, get number of pages.
         then iterate through them with the > arrow until num_pages 
         """
-        self.select_operating_system(_os)
-        self.select_aws_region_dropdown(region)
-        self.driver.switch_to.frame(self.iframe)
-        rtn = []
-        # page numbers (1, 2, 3, (literal)..., last, >)
-        pages = self.driver.find_element(By.CLASS_NAME, 'awsui-table-pagination-content').find_elements(By.TAG_NAME, "li")
-        pages[1].click() # make sure were on page 1 when this function is run more than once
-        arrow_button = pages[-1] # >
-        num_pages = pages[-2].find_element(By.TAG_NAME, 'button').text # last page number
+        logger.debug(f"{self._id} scrape all: {region=} {_os=}")
+        try:
+            self.lock.acquire()
+            self.select_operating_system(_os)
+            self.select_aws_region_dropdown(region)
+            self.driver.switch_to.frame(self.iframe)
+            rtn: List[Instance] = []
+            # page numbers (1, 2, 3, (literal)..., last, >)
+            pages = self.driver.find_element(By.CLASS_NAME, 'awsui-table-pagination-content').find_elements(By.TAG_NAME, "li")
+            pages[1].click() # make sure were on page 1 when this function is run more than once
+            arrow_button = pages[-1] # >
+            num_pages = pages[-2].find_element(By.TAG_NAME, 'button').text # last page number
 
-        for i in range(int(num_pages)):
-            screen.draw_line(screen_status_line, f"scraping page {i+1}/{num_pages}...")
-            # only cycle to next page after it has been scraped
-            if i > 0:
-                arrow_button.click()
-            selection = self.driver.find_element(By.TAG_NAME, 'tbody')
-            # rows in HTML table
-            tr_tags = selection.find_elements(By.TAG_NAME, 'tr')
-            for tr in tr_tags:
-                instance_props = []
-                # columns in row
-                for td in tr.find_elements(By.TAG_NAME, "td"):
-                    # 0 t3a.xlarge # 1 $0.1699 # 2 4 # 3 16 GiB # 4 EBS Only # 5 Up to 5 Gigabit
-                    instance_props.append(td.text)
-                instance = Instance(region, os, *instance_props)
-                # instance.store(db.conn, MAIN_TABLE_NAME)
-                # instance.store(conn=dwh.conn, main_table_name=MAIN_TABLE_NAME, dwh_timestamp_suffix=TIMESTAMP)
-                rtn.append(instance)
-            time.sleep(0.2)
-        self.driver.switch_to.default_content()
+            #################
+            # scrape
+            #################
+            logger.debug(f"{self._id} scraping {num_pages} pages...")
+            for i in range(int(num_pages)):
+                # only cycle to next page after it has been scraped
+                if i > 0:
+                    arrow_button.click()
+                selection = self.driver.find_element(By.TAG_NAME, 'tbody')
+                # rows in HTML table
+                tr_tags = selection.find_elements(By.TAG_NAME, 'tr')
+                for tr in tr_tags:
+                    instance_props = []
+                    # columns in row
+                    for td in tr.find_elements(By.TAG_NAME, "td"):
+                        # 0 t3a.xlarge # 1 $0.1699 # 2 4 # 3 16 GiB # 4 EBS Only # 5 Up to 5 Gigabit
+                        instance_props.append(td.text)
+                    instance = Instance(region, os, *instance_props)
+                    rtn.append(instance)
+                time.sleep(0.2)
+
+            #################
+            # Store
+            #################
+            d = Path(self.csv_data_dir / self.human_date / _os)
+            d.mkdir(exist_ok=True, parents=True)
+            f = d / f"{region}.csv"
+            if f.exists():
+                logger.warning(f"Overwriting existing data at '{f.relative_to('.')}'")
+                f.unlink()
+            with f.open('w') as cf:
+                fieldnames = Instance.get_csv_fields()
+                # don't need these fields, they are included in the filepath
+                fieldnames.remove("region")
+                fieldnames.remove("operating_system")
+                writer = csv.DictWriter(cf, fieldnames=fieldnames)
+                writer.writeheader()
+                for inst in rtn:
+                    row = inst.as_dict()
+                    row.pop("region")
+                    row.pop("operating_system")
+                    writer.writerow(row)
+            logger.debug(f"saved data to file: '{f}'")
+            self.driver.switch_to.default_content()
+            self.lock.release()
+        except Exception as e:
+            self.driver.close()
+            logger.error(e)
+            raise e
         return rtn
 
     def get_result_count_test(self) -> int:
         """get the 'Viewing ### of ### Available Instances' count to check our results"""
-        self.driver.switch_to.frame(self.iframe)
-        t =  self.driver.find_element(By.CLASS_NAME, 'awsui-table-header').find_element(By.TAG_NAME, "h2").text
-        # ¯\_(ツ)_/¯
-        self.driver.switch_to.default_content()
+        logger.debug(f"{self._id} get results count")
+        try:
+            self.driver.switch_to.frame(self.iframe)
+            t =  self.driver.find_element(By.CLASS_NAME, 'awsui-table-header').find_element(By.TAG_NAME, "h2").text
+            # ¯\_(ツ)_/¯
+            self.driver.switch_to.default_content()
+        except Exception as e:
+            self.driver.close()
+            logger.error(e)
+            raise e
         return int(t.split("of")[1].split(" available")[0].strip())
 
     def wait_for_menus_to_close(self):
-        _t = time.time()
-        # vCPU selection box
-        self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='vCPU_single']")))
-        # Instance Type selection box
-        self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='plc:InstanceFamily_single']")))
-        # Operating System selection box
-        self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='plc:OperatingSystem_single']")))
-        # instance search bar
-        self.waiter.until(ec.visibility_of_element_located((By.ID, "awsui-input-1")))
-        # instance search paginator
-        self.waiter.until(ec.visibility_of_element_located((By.TAG_NAME, "awsui-table-pagination")))
-        logger.debug(f"waited {time.time() - _t:.3f} sec")
+        try:
+            # vCPU selection box
+            self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='vCPU_single']")))
+            # Instance Type selection box
+            self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='plc:InstanceFamily_single']")))
+            # Operating System selection box
+            self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='plc:OperatingSystem_single']")))
+            # instance search bar
+            self.waiter.until(ec.visibility_of_element_located((By.ID, "awsui-input-1")))
+            # instance search paginator
+            self.waiter.until(ec.visibility_of_element_located((By.TAG_NAME, "awsui-table-pagination")))
+        except Exception as e:
+            self.driver.close()
+            logger.error(e)
+            raise e
 
-    def run(self, tgt_regions=None, tgt_operating_systems=None):
+    def run(self, tgt_operating_systems=None, tgt_regions=None):
         """
         operating_systems: List[Any] = None # 'None' to scrape ['Linux', 'Windows']
         regions = None # 'None' to scrape all regions
         """
-        if not tgt_regions:
-            tgt_regions = self.get_available_regions()
-        if not tgt_operating_systems:
-            tgt_operating_systems = ['Linux', 'Windows']
+        try:
+            logger.debug(f"{self._id} run")
+            if not tgt_regions:
+                tgt_regions = self.get_available_regions()
+            if not tgt_operating_systems:
+                tgt_operating_systems = ['Linux', 'Windows']
 
-        base_scrape_dir = Path(self.csv_data_dir / self.human_date)
-        if base_scrape_dir.exists():
-            logger.warning(f"Deleting old data in '{base_scrape_dir}'")
-            shutil.rmtree(base_scrape_dir)
+            base_scrape_dir = Path(self.csv_data_dir / self.human_date)
+            if base_scrape_dir.exists():
+                logger.warning(f"Deleting old data in '{base_scrape_dir}'")
+                shutil.rmtree(base_scrape_dir)
 
-        screen_os_lines = {}
-        for n, r in enumerate(tgt_operating_systems):
-            # 2 for title and "OS" heading
-            screen_os_lines[r] = n+2
-        screen_regions_lines = {}
-        for n, r in enumerate(tgt_regions):
-            # 2 for title and "OS" heading
-            # 1 for "Regions" heading
-            screen_regions_lines[r] = n+2+len(tgt_operating_systems)+1
-
-        line_count = len(tgt_operating_systems) + len(tgt_regions) + 3 + 2
-        screen = MyScreen(h=(len(tgt_operating_systems) + len(tgt_regions) + 3 + 2))
-        screen.draw_line(0, "Scraperdoodle")
-        screen.draw_line(1, "OS:")
-        for t, n in screen_os_lines.items():
-            screen.draw_line(n, f"- {t}")
-        screen.draw_line(2+len(tgt_operating_systems), "Regions:")
-        for t, n in screen_regions_lines.items():
-            screen.draw_line(n, f"- {t}")
-        screen.draw_line(line_count-2, "")
-        screen.draw_line(line_count-1, "Status: starting...")
-        status_line = line_count - 1
-
-        self.zoom_browser()
-        self.nav_to(self.NavSection.ON_DEMAND_PRICING)
-        total_instance_count = 0
-        for o_num, _os in enumerate(tgt_operating_systems):
-            screen.draw_line(status_line, f"setting operating system")
-            screen.draw_line(screen_os_lines[_os], f"\033[93m- {_os}\033[0m")
-
-            # NOTE: this is where the directory structure is determined
-            tgt_csv_data_dir = self.csv_data_dir / self.human_date / _os
-            tgt_csv_data_dir.mkdir(parents=True, exist_ok=True)
-
-            ###########################
-            # Scrape
-            ###########################
-            for r_num, region in enumerate(tgt_regions):
-                # NOTE: if the selected region was not visible in the drop-down menu at the time it was clicked,
-                # the page seems to jump back to the top. Happened on ca-central-1. There are also fancy dividers
-                # between some regions
-                screen.draw_line(status_line, f"setting region to {region}")
-                t_region_scrape_start = time.time()
-                screen.draw_line(screen_regions_lines[region], f"\033[93m- {region}\033[0m")
-                screen.draw_line(status_line, f"scraping {region}...")
-
-                stuff = self.scrape_all_(region=region, _os=_os, screen=screen, screen_status_line=status_line)
-                t_region_scrape = ceil(time.time() - t_region_scrape_start)
-                if len(stuff) != self.get_result_count_test():
-                    screen.draw_line(screen_regions_lines[region], f"\033[94m- {region} BAD DATA: (*{len(stuff)}* instances in {t_region_scrape} sec)\033[0m")
-                    logger.warning("WARNING: possibly got bad data - make sure every thing in the 'On-Demand Plans for EC2' section is visible, and rerun")
-                total_instance_count += len(stuff)
-                screen.draw_line(screen_regions_lines[region], f"\033[93m- {region} ({len(stuff)} instances in {t_region_scrape} sec)\033[0m")
-                screen.draw_line(status_line, f"writing csv data...")
+            # self.zoom_browser()
+            self.nav_to(self.NavSection.ON_DEMAND_PRICING)
+            total_instance_count = 0
+            for o_num, _os in enumerate(tgt_operating_systems):
+                # NOTE: this is where the directory structure is determined
+                tgt_csv_data_dir = self.csv_data_dir / self.human_date / _os
+                tgt_csv_data_dir.mkdir(parents=True, exist_ok=True)
 
                 ###########################
-                # Write csv
+                # Scrape
                 ###########################
-                f = tgt_csv_data_dir / f"{region}.csv"
-                with f.open('w') as cf:
-                    fieldnames = Instance.get_csv_fields()
-                    # don't need these fields, they are included in the filepath
-                    fieldnames.remove("region")
-                    fieldnames.remove("operating_system")
-                    writer = csv.DictWriter(cf, fieldnames=fieldnames)
-                    writer.writeheader()
-                    for inst in stuff:
-                        row = inst.as_dict()
-                        row.pop("region")
-                        row.pop("operating_system")
-                        writer.writerow(row)
-                _et = ceil(time.time() - self.t_prog_start)
-                et = seconds_to_timer(_et)
-                screen.draw_line(screen_regions_lines[region], f"\033[92m- {region} ({len(stuff)} instances in {t_region_scrape} sec) (saved to file '{f.relative_to('.')}')\033[0m")
-                screen.draw_line(status_line, f"finished scraping {region}")
-                logger.info(f"{et} - processed {len(stuff)} {_os} ({o_num+1}/{len(tgt_operating_systems)}) instances for {region} ({r_num+1}/{len(tgt_regions)}) in {t_region_scrape} seconds.")
+                for r_num, region in enumerate(tgt_regions):
+                    # NOTE: if the selected region was not visible in the drop-down menu at the time it was clicked,
+                    # the page seems to jump back to the top. Happened on ca-central-1. There are also fancy dividers
+                    # between some regions
+                    t_region_scrape_start = time.time()
+                    stuff = self.scrape_and_store(_os=_os, region=region, screen=None, screen_status_line=None)
+                    t_region_scrape = ceil(time.time() - t_region_scrape_start)
+                    if len(stuff) != self.get_result_count_test():
+                        logger.warning("WARNING: possibly got bad data - make sure every thing in the 'On-Demand Plans for EC2' section is visible, and rerun")
+                    total_instance_count += len(stuff)
 
-            screen.draw_line(status_line, f"finished scraping {_os}")
-            screen.draw_line(screen_os_lines[_os], f"\033[92m- {_os}\033[0m")
-            for t, n in screen_regions_lines.items():
-                screen.draw_line(n, f"- {t}")
-            ###########################
-            # zip the csv files per os
-            ###########################
-            zip_archive = f"{_os}_{self.human_date}.bz2.zip"
-            with zipfile.ZipFile(str(base_scrape_dir / zip_archive), 'w', compression=zipfile.ZIP_BZIP2) as zf:
-                for csv_file in tgt_csv_data_dir.iterdir():
+                    ###########################
+                    # Write csv
+                    ###########################
+                    f = tgt_csv_data_dir / f"{region}.csv"
+                    with f.open('w') as cf:
+                        fieldnames = Instance.get_csv_fields()
+                        # don't need these fields, they are included in the filepath
+                        fieldnames.remove("region")
+                        fieldnames.remove("operating_system")
+                        writer = csv.DictWriter(cf, fieldnames=fieldnames)
+                        writer.writeheader()
+                        for inst in stuff:
+                            row = inst.as_dict()
+                            row.pop("region")
+                            row.pop("operating_system")
+                            writer.writerow(row)
+                    _et = ceil(time.time() - self.t_prog_start)
+                    et = seconds_to_timer(_et)
+                    logger.info(f"{et} - processed {len(stuff)} {_os} ({o_num+1}/{len(tgt_operating_systems)}) instances for {region} ({r_num+1}/{len(tgt_regions)}) in {t_region_scrape} seconds.")
+
+                ###########################
+                # zip the csv files per os
+                ###########################
+                zip_archive = f"{_os}_{self.human_date}.bz2.zip"
+                with zipfile.ZipFile(str(base_scrape_dir / zip_archive), 'w', compression=zipfile.ZIP_BZIP2) as zf:
+                    for csv_file in tgt_csv_data_dir.iterdir():
+                        zf.write(csv_file.relative_to('.'))
+                logger.info(f"Compressed data stored: {str(base_scrape_dir/zip_archive)}")
+
+            t_prog_end = ceil(time.time() - self.t_prog_start)
+            self.driver.close()
+            logger.info("Program finished")
+            logger.info(f"Elapsed time: {seconds_to_timer(t_prog_end)}")
+            logger.info(f"{total_instance_count} instances were scraped for {len(tgt_operating_systems)} operating systems in {len(tgt_regions)} regions.")
+        except Exception as e:
+            self.driver.close()
+            logger.error(e)
+            raise e
+
+def compress_data(data_dir: str|Path):
+    _os = Path(data_dir).relative_to('.')
+    date_str = _os.name # don't rely on generating a fresh date from timestamp
+    for i in _os.iterdir():
+        if i.is_dir():
+            # i.name is the operating system name for which regional data has been gathered
+            friendly_os_name = '-'.join(i.name.split(' '))
+            tgt_zipfile = _os / (friendly_os_name + f"_{date_str}.bz2.zip") # e.g. csv-data/ec2/2023-01-04/Linux_2023-01-04.bz2.zip
+            with zipfile.ZipFile(str(tgt_zipfile), 'w', compression=zipfile.ZIP_BZIP2) as zf:
+                _csv_ct = 0
+                for csv_file in i.iterdir():
+                    _csv_ct += 1
                     zf.write(csv_file.relative_to('.'))
-            logger.info(f"Compressed data stored: {str(base_scrape_dir/zip_archive)}")
-
-        screen.clear()
-        t_prog_end = ceil(time.time() - scraper.t_prog_start)
-        self.driver.close()
-        logger.info("Program finished")
-        logger.info(f"Elapsed time: {seconds_to_timer(t_prog_end)}")
-        logger.info(f"{total_instance_count} instances were scraped for {len(tgt_operating_systems)} operating systems in {len(tgt_regions)} regions.")
+            logger.debug(f"{i.stat()=}")
+            logger.info(f"Compressed {_csv_ct} files of {friendly_os_name} os data to: {str(tgt_zipfile)} ({tgt_zipfile.stat().st_size} bytes)")
 
 if __name__ == '__main__':
-    LOG_FILE = 'scrape_ec2.log' # None to supress log output
+    t_main = time.time()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-t", "--thread-count", default=1, action='store', type=int, help='number of threads (Selenium drivers) to use')
+    args = parser.parse_args()
+
+    if args.thread_count < 1:
+        NUM_THREADS = 1
+    else:
+        NUM_THREADS = args.thread_count
+    LOG_FILE = 'scrape_ec2.log'
     OPERATING_SYSTEMS = None # 'None' to scrape ['Linux', 'Windows']
     REGIONS = None # 'None' to scrape all regions
     CSV_DATA_DIR = Path('csv-data/ec2')
@@ -579,13 +663,12 @@ if __name__ == '__main__':
     UPLOAD_BUCKET_REGION = 'us-east-1'
     UPLOAD_BUCKET_NAME = 'quickhost-pricing-data'
     AWS_PROFILE = 'quickhost-ci-admin'
-    NUM_THREADS = 2
 
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
-    logging.getLogger('selenium.*').setLevel(logging.ERROR)
-    logging.getLogger('selenium.webdriver.remote.remote_connection').setLevel(logging.ERROR)
-    logging.getLogger('urllib3').setLevel(logging.ERROR)
+    logging.getLogger('selenium.*').setLevel(logging.WARNING)
+    logging.getLogger('selenium.webdriver.remote.remote_connection').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
     formatter = logging.Formatter('%(asctime)s : %(funcName)s : %(levelname)s : %(name)s : %(message)s')
     if LOG_FILE:
         fh = logging.FileHandler(LOG_FILE)
@@ -606,35 +689,34 @@ if __name__ == '__main__':
         upload_bucket_name = UPLOAD_BUCKET_NAME,
         aws_profile = AWS_PROFILE,
     )
+    logger.debug(f"{config.log_file=}")
+    logger.debug(f"{config.csv_data_dir=}")
+    logger.debug(f"{config.timestamp=}")
+    logger.debug(f"{config.page_load_delay=}")
+    logger.debug(f"{config.wait_between_commands=}")
+    logger.debug(f"{config.url=}")
+    logger.debug(f"{config.timezone=}")
+    logger.debug(f"{config.upload_bucket_region=}")
+    logger.debug(f"{config.upload_bucket_name=}")
+    logger.debug(f"{config.aws_profile=}")
+
     scrapers = []
     tgt_oses, tgt_regions = EC2Scraper.get_available_regions_and_os(config)
-    print(tgt_oses)
-    print(tgt_regions)
+    tgt_oses = ['Linux', 'Windows']
+    # tgt_regions = ['us-east-1','us-east-2','us-west-1','us-west-2',]
     thread_tgts = []
     for o in tgt_oses:
         for r in tgt_regions:
             thread_tgts.append((o,r))
-    print(len(thread_tgts)) # 443
-    # while thread_tgts != []:
-    #     for o in tgt_oses:
-    #         for r in tgt_regions:
-    #             pass
-    #             print(thread_tgts.pop(thread_tgts.index((o,r))))
-    # exit()
+    thread_thing = ThreadDivvier(config=config, thread_count=NUM_THREADS)
+    t_prog_init = time.time() - t_main
+    print(f"Initialized in {seconds_to_timer(time.time() - t_main)}")
+    # blocks until all threads have finished running, and thread_tgts is exhausted
+    thread_thing.run_threads(thread_tgts)
 
-    for scrpr in range(1):
-        scraper = EC2Scraper(config)
-        scrapers.append(scraper)
-    for scrpr in scrapers:
-        scraper.run()
+    compress_data(config.csv_data_dir / config.human_date)
+    t_prog_tot = time.time() - t_main
+    print(f"Program finished in {seconds_to_timer(time.time() - t_main)}")
+    with open('metric-data.txt', 'a') as md:
+        md.write(f"{NUM_THREADS}\t{len(tgt_oses)}\t{len(tgt_regions)}\t{t_prog_init:.2f}\t{t_prog_tot:.2f}\n")
     
-    # want some class that allows me to
-    # 1) set a max number of threads
-    # 2) pop arguments from a stack for a function to run in a thread
-    # 3) stop and wait for threads to complete if max number of threads are running
-    # 4) automatically start a new thread when a running thread finishes (stop adding threads after stack has been emptied)
-    # with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-    #     pass
-
-    # once scraping is done, zip the resulting csv files
-    #

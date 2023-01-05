@@ -2,8 +2,6 @@
 
 Gather EC2 price info by scraping <https://aws.amazon.com/ec2/pricing/on-demand/>
 
-requires FireFox, geckodriver
-
 # example data
 
 `csv-data/ec2/2022-12-28/Linux/us-east-1.csv`
@@ -17,4 +15,5 @@ a1.2xlarge,$0.204,8,16 GiB,EBS Only,Up to 10 Gigabit
 
 # api url
 
-curl and query data
+*maybe...*
+
