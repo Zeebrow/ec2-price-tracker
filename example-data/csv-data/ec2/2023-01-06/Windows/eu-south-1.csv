@@ -1,0 +1,201 @@
+instance_type,cost_per_hr,cpu_ct,ram_size_gb,storage_type,network_throughput
+t3.nano,$0.0106,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0212,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0424,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0663,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1234,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2653,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5306,8,32 GiB,EBS Only,Up to 5 Gigabit
+t3a.nano,$0.01,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3a.micro,$0.02,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3a.small,$0.04,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3a.medium,$0.0615,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3a.large,$0.1138,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3a.xlarge,$0.2461,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3a.2xlarge,$0.4922,8,32 GiB,EBS Only,Up to 5 Gigabit
+m6i.large,$0.204,2,8 GiB,EBS Only,Up to 12500 Megabit
+m6i.xlarge,$0.408,4,16 GiB,EBS Only,Up to 12500 Megabit
+m6i.2xlarge,$0.816,8,32 GiB,EBS Only,Up to 12500 Megabit
+m6i.4xlarge,$1.632,16,64 GiB,EBS Only,Up to 12500 Megabit
+m6i.8xlarge,$3.264,32,128 GiB,EBS Only,12500 Megabit
+m6i.12xlarge,$4.896,48,192 GiB,EBS Only,18750 Megabit
+t3.nano,$0.0106,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0212,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0424,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0663,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1234,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2653,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5306,8,32 GiB,EBS Only,Up to 5 Gigabit
+t3a.nano,$0.01,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3a.micro,$0.02,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3a.small,$0.04,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3a.medium,$0.0615,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3a.large,$0.1138,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3a.xlarge,$0.2461,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3a.2xlarge,$0.4922,8,32 GiB,EBS Only,Up to 5 Gigabit
+m6i.large,$0.204,2,8 GiB,EBS Only,Up to 12500 Megabit
+m6i.xlarge,$0.408,4,16 GiB,EBS Only,Up to 12500 Megabit
+m6i.2xlarge,$0.816,8,32 GiB,EBS Only,Up to 12500 Megabit
+m6i.4xlarge,$1.632,16,64 GiB,EBS Only,Up to 12500 Megabit
+m6i.8xlarge,$3.264,32,128 GiB,EBS Only,12500 Megabit
+m6i.12xlarge,$4.896,48,192 GiB,EBS Only,18750 Megabit
+t3.nano,$0.0106,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0212,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0424,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0663,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1234,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2653,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5306,8,32 GiB,EBS Only,Up to 5 Gigabit
+t3a.nano,$0.01,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3a.micro,$0.02,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3a.small,$0.04,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3a.medium,$0.0615,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3a.large,$0.1138,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3a.xlarge,$0.2461,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3a.2xlarge,$0.4922,8,32 GiB,EBS Only,Up to 5 Gigabit
+m6i.large,$0.204,2,8 GiB,EBS Only,Up to 12500 Megabit
+m6i.xlarge,$0.408,4,16 GiB,EBS Only,Up to 12500 Megabit
+m6i.2xlarge,$0.816,8,32 GiB,EBS Only,Up to 12500 Megabit
+m6i.4xlarge,$1.632,16,64 GiB,EBS Only,Up to 12500 Megabit
+m6i.8xlarge,$3.264,32,128 GiB,EBS Only,12500 Megabit
+m6i.12xlarge,$4.896,48,192 GiB,EBS Only,18750 Megabit
+t3.nano,$0.0106,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0212,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0424,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0663,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1234,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2653,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5306,8,32 GiB,EBS Only,Up to 5 Gigabit
+t3a.nano,$0.01,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3a.micro,$0.02,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3a.small,$0.04,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3a.medium,$0.0615,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3a.large,$0.1138,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3a.xlarge,$0.2461,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3a.2xlarge,$0.4922,8,32 GiB,EBS Only,Up to 5 Gigabit
+m6i.large,$0.204,2,8 GiB,EBS Only,Up to 12500 Megabit
+m6i.xlarge,$0.408,4,16 GiB,EBS Only,Up to 12500 Megabit
+m6i.2xlarge,$0.816,8,32 GiB,EBS Only,Up to 12500 Megabit
+m6i.4xlarge,$1.632,16,64 GiB,EBS Only,Up to 12500 Megabit
+m6i.8xlarge,$3.264,32,128 GiB,EBS Only,12500 Megabit
+m6i.12xlarge,$4.896,48,192 GiB,EBS Only,18750 Megabit
+t3.nano,$0.0106,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0212,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0424,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0663,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1234,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2653,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5306,8,32 GiB,EBS Only,Up to 5 Gigabit
+t3a.nano,$0.01,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3a.micro,$0.02,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3a.small,$0.04,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3a.medium,$0.0615,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3a.large,$0.1138,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3a.xlarge,$0.2461,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3a.2xlarge,$0.4922,8,32 GiB,EBS Only,Up to 5 Gigabit
+m6i.large,$0.204,2,8 GiB,EBS Only,Up to 12500 Megabit
+m6i.xlarge,$0.408,4,16 GiB,EBS Only,Up to 12500 Megabit
+m6i.2xlarge,$0.816,8,32 GiB,EBS Only,Up to 12500 Megabit
+m6i.4xlarge,$1.632,16,64 GiB,EBS Only,Up to 12500 Megabit
+m6i.8xlarge,$3.264,32,128 GiB,EBS Only,12500 Megabit
+m6i.12xlarge,$4.896,48,192 GiB,EBS Only,18750 Megabit
+t3.nano,$0.0106,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0212,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0424,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0663,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1234,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2653,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5306,8,32 GiB,EBS Only,Up to 5 Gigabit
+t3a.nano,$0.01,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3a.micro,$0.02,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3a.small,$0.04,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3a.medium,$0.0615,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3a.large,$0.1138,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3a.xlarge,$0.2461,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3a.2xlarge,$0.4922,8,32 GiB,EBS Only,Up to 5 Gigabit
+m6i.large,$0.204,2,8 GiB,EBS Only,Up to 12500 Megabit
+m6i.xlarge,$0.408,4,16 GiB,EBS Only,Up to 12500 Megabit
+m6i.2xlarge,$0.816,8,32 GiB,EBS Only,Up to 12500 Megabit
+m6i.4xlarge,$1.632,16,64 GiB,EBS Only,Up to 12500 Megabit
+m6i.8xlarge,$3.264,32,128 GiB,EBS Only,12500 Megabit
+m6i.12xlarge,$4.896,48,192 GiB,EBS Only,18750 Megabit
+t3.nano,$0.0106,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0212,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0424,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0663,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1234,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2653,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5306,8,32 GiB,EBS Only,Up to 5 Gigabit
+t3a.nano,$0.01,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3a.micro,$0.02,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3a.small,$0.04,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3a.medium,$0.0615,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3a.large,$0.1138,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3a.xlarge,$0.2461,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3a.2xlarge,$0.4922,8,32 GiB,EBS Only,Up to 5 Gigabit
+m6i.large,$0.204,2,8 GiB,EBS Only,Up to 12500 Megabit
+m6i.xlarge,$0.408,4,16 GiB,EBS Only,Up to 12500 Megabit
+m6i.2xlarge,$0.816,8,32 GiB,EBS Only,Up to 12500 Megabit
+m6i.4xlarge,$1.632,16,64 GiB,EBS Only,Up to 12500 Megabit
+m6i.8xlarge,$3.264,32,128 GiB,EBS Only,12500 Megabit
+m6i.12xlarge,$4.896,48,192 GiB,EBS Only,18750 Megabit
+t3.nano,$0.0106,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0212,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0424,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0663,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1234,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2653,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5306,8,32 GiB,EBS Only,Up to 5 Gigabit
+t3a.nano,$0.01,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3a.micro,$0.02,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3a.small,$0.04,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3a.medium,$0.0615,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3a.large,$0.1138,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3a.xlarge,$0.2461,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3a.2xlarge,$0.4922,8,32 GiB,EBS Only,Up to 5 Gigabit
+m6i.large,$0.204,2,8 GiB,EBS Only,Up to 12500 Megabit
+m6i.xlarge,$0.408,4,16 GiB,EBS Only,Up to 12500 Megabit
+m6i.2xlarge,$0.816,8,32 GiB,EBS Only,Up to 12500 Megabit
+m6i.4xlarge,$1.632,16,64 GiB,EBS Only,Up to 12500 Megabit
+m6i.8xlarge,$3.264,32,128 GiB,EBS Only,12500 Megabit
+m6i.12xlarge,$4.896,48,192 GiB,EBS Only,18750 Megabit
+t3.nano,$0.0106,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0212,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0424,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0663,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1234,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2653,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5306,8,32 GiB,EBS Only,Up to 5 Gigabit
+t3a.nano,$0.01,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3a.micro,$0.02,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3a.small,$0.04,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3a.medium,$0.0615,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3a.large,$0.1138,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3a.xlarge,$0.2461,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3a.2xlarge,$0.4922,8,32 GiB,EBS Only,Up to 5 Gigabit
+m6i.large,$0.204,2,8 GiB,EBS Only,Up to 12500 Megabit
+m6i.xlarge,$0.408,4,16 GiB,EBS Only,Up to 12500 Megabit
+m6i.2xlarge,$0.816,8,32 GiB,EBS Only,Up to 12500 Megabit
+m6i.4xlarge,$1.632,16,64 GiB,EBS Only,Up to 12500 Megabit
+m6i.8xlarge,$3.264,32,128 GiB,EBS Only,12500 Megabit
+m6i.12xlarge,$4.896,48,192 GiB,EBS Only,18750 Megabit
+t3.nano,$0.0106,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0212,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0424,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0663,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1234,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2653,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5306,8,32 GiB,EBS Only,Up to 5 Gigabit
+t3a.nano,$0.01,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3a.micro,$0.02,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3a.small,$0.04,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3a.medium,$0.0615,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3a.large,$0.1138,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3a.xlarge,$0.2461,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3a.2xlarge,$0.4922,8,32 GiB,EBS Only,Up to 5 Gigabit
+m6i.large,$0.204,2,8 GiB,EBS Only,Up to 12500 Megabit
+m6i.xlarge,$0.408,4,16 GiB,EBS Only,Up to 12500 Megabit
+m6i.2xlarge,$0.816,8,32 GiB,EBS Only,Up to 12500 Megabit
+m6i.4xlarge,$1.632,16,64 GiB,EBS Only,Up to 12500 Megabit
+m6i.8xlarge,$3.264,32,128 GiB,EBS Only,12500 Megabit
+m6i.12xlarge,$4.896,48,192 GiB,EBS Only,18750 Megabit

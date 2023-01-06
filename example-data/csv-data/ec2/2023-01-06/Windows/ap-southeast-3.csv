@@ -1,0 +1,101 @@
+instance_type,cost_per_hr,cpu_ct,ram_size_gb,storage_type,network_throughput
+t3.nano,$0.0112,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0224,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0448,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0712,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1332,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2848,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5696,8,32 GiB,EBS Only,Up to 5 Gigabit
+m5.large,$0.212,2,8 GiB,EBS Only,Up to 10 Gigabit
+m5.xlarge,$0.424,4,16 GiB,EBS Only,Up to 10 Gigabit
+m5.2xlarge,$0.848,8,32 GiB,EBS Only,Up to 10 Gigabit
+m5.4xlarge,$1.696,16,64 GiB,EBS Only,Up to 10 Gigabit
+m5.8xlarge,$3.392,32,128 GiB,EBS Only,10 Gigabit
+m5.12xlarge,$5.088,48,192 GiB,EBS Only,10 Gigabit
+m5.16xlarge,$6.784,64,256 GiB,EBS Only,20 Gigabit
+m5.24xlarge,$10.176,96,384 GiB,EBS Only,25 Gigabit
+m5.metal,$10.176,96,384 GiB,EBS Only,25 Gigabit
+m5d.large,$0.233,2,8 GiB,1 x 75 NVMe SSD,Up to 10 Gigabit
+m5d.xlarge,$0.466,4,16 GiB,1 x 150 NVMe SSD,Up to 10 Gigabit
+m5d.2xlarge,$0.932,8,32 GiB,1 x 300 NVMe SSD,Up to 10 Gigabit
+m5d.4xlarge,$1.864,16,64 GiB,2 x 300 NVMe SSD,Up to 10 Gigabit
+t3.nano,$0.0112,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0224,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0448,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0712,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1332,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2848,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5696,8,32 GiB,EBS Only,Up to 5 Gigabit
+m5.large,$0.212,2,8 GiB,EBS Only,Up to 10 Gigabit
+m5.xlarge,$0.424,4,16 GiB,EBS Only,Up to 10 Gigabit
+m5.2xlarge,$0.848,8,32 GiB,EBS Only,Up to 10 Gigabit
+m5.4xlarge,$1.696,16,64 GiB,EBS Only,Up to 10 Gigabit
+m5.8xlarge,$3.392,32,128 GiB,EBS Only,10 Gigabit
+m5.12xlarge,$5.088,48,192 GiB,EBS Only,10 Gigabit
+m5.16xlarge,$6.784,64,256 GiB,EBS Only,20 Gigabit
+m5.24xlarge,$10.176,96,384 GiB,EBS Only,25 Gigabit
+m5.metal,$10.176,96,384 GiB,EBS Only,25 Gigabit
+m5d.large,$0.233,2,8 GiB,1 x 75 NVMe SSD,Up to 10 Gigabit
+m5d.xlarge,$0.466,4,16 GiB,1 x 150 NVMe SSD,Up to 10 Gigabit
+m5d.2xlarge,$0.932,8,32 GiB,1 x 300 NVMe SSD,Up to 10 Gigabit
+m5d.4xlarge,$1.864,16,64 GiB,2 x 300 NVMe SSD,Up to 10 Gigabit
+t3.nano,$0.0112,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0224,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0448,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0712,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1332,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2848,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5696,8,32 GiB,EBS Only,Up to 5 Gigabit
+m5.large,$0.212,2,8 GiB,EBS Only,Up to 10 Gigabit
+m5.xlarge,$0.424,4,16 GiB,EBS Only,Up to 10 Gigabit
+m5.2xlarge,$0.848,8,32 GiB,EBS Only,Up to 10 Gigabit
+m5.4xlarge,$1.696,16,64 GiB,EBS Only,Up to 10 Gigabit
+m5.8xlarge,$3.392,32,128 GiB,EBS Only,10 Gigabit
+m5.12xlarge,$5.088,48,192 GiB,EBS Only,10 Gigabit
+m5.16xlarge,$6.784,64,256 GiB,EBS Only,20 Gigabit
+m5.24xlarge,$10.176,96,384 GiB,EBS Only,25 Gigabit
+m5.metal,$10.176,96,384 GiB,EBS Only,25 Gigabit
+m5d.large,$0.233,2,8 GiB,1 x 75 NVMe SSD,Up to 10 Gigabit
+m5d.xlarge,$0.466,4,16 GiB,1 x 150 NVMe SSD,Up to 10 Gigabit
+m5d.2xlarge,$0.932,8,32 GiB,1 x 300 NVMe SSD,Up to 10 Gigabit
+m5d.4xlarge,$1.864,16,64 GiB,2 x 300 NVMe SSD,Up to 10 Gigabit
+t3.nano,$0.0112,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0224,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0448,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0712,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1332,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2848,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5696,8,32 GiB,EBS Only,Up to 5 Gigabit
+m5.large,$0.212,2,8 GiB,EBS Only,Up to 10 Gigabit
+m5.xlarge,$0.424,4,16 GiB,EBS Only,Up to 10 Gigabit
+m5.2xlarge,$0.848,8,32 GiB,EBS Only,Up to 10 Gigabit
+m5.4xlarge,$1.696,16,64 GiB,EBS Only,Up to 10 Gigabit
+m5.8xlarge,$3.392,32,128 GiB,EBS Only,10 Gigabit
+m5.12xlarge,$5.088,48,192 GiB,EBS Only,10 Gigabit
+m5.16xlarge,$6.784,64,256 GiB,EBS Only,20 Gigabit
+m5.24xlarge,$10.176,96,384 GiB,EBS Only,25 Gigabit
+m5.metal,$10.176,96,384 GiB,EBS Only,25 Gigabit
+m5d.large,$0.233,2,8 GiB,1 x 75 NVMe SSD,Up to 10 Gigabit
+m5d.xlarge,$0.466,4,16 GiB,1 x 150 NVMe SSD,Up to 10 Gigabit
+m5d.2xlarge,$0.932,8,32 GiB,1 x 300 NVMe SSD,Up to 10 Gigabit
+m5d.4xlarge,$1.864,16,64 GiB,2 x 300 NVMe SSD,Up to 10 Gigabit
+t3.nano,$0.0112,2,0.5 GiB,EBS Only,Up to 5 Gigabit
+t3.micro,$0.0224,2,1 GiB,EBS Only,Up to 5 Gigabit
+t3.small,$0.0448,2,2 GiB,EBS Only,Up to 5 Gigabit
+t3.medium,$0.0712,2,4 GiB,EBS Only,Up to 5 Gigabit
+t3.large,$0.1332,2,8 GiB,EBS Only,Up to 5 Gigabit
+t3.xlarge,$0.2848,4,16 GiB,EBS Only,Up to 5 Gigabit
+t3.2xlarge,$0.5696,8,32 GiB,EBS Only,Up to 5 Gigabit
+m5.large,$0.212,2,8 GiB,EBS Only,Up to 10 Gigabit
+m5.xlarge,$0.424,4,16 GiB,EBS Only,Up to 10 Gigabit
+m5.2xlarge,$0.848,8,32 GiB,EBS Only,Up to 10 Gigabit
+m5.4xlarge,$1.696,16,64 GiB,EBS Only,Up to 10 Gigabit
+m5.8xlarge,$3.392,32,128 GiB,EBS Only,10 Gigabit
+m5.12xlarge,$5.088,48,192 GiB,EBS Only,10 Gigabit
+m5.16xlarge,$6.784,64,256 GiB,EBS Only,20 Gigabit
+m5.24xlarge,$10.176,96,384 GiB,EBS Only,25 Gigabit
+m5.metal,$10.176,96,384 GiB,EBS Only,25 Gigabit
+m5d.large,$0.233,2,8 GiB,1 x 75 NVMe SSD,Up to 10 Gigabit
+m5d.xlarge,$0.466,4,16 GiB,1 x 150 NVMe SSD,Up to 10 Gigabit
+m5d.2xlarge,$0.932,8,32 GiB,1 x 300 NVMe SSD,Up to 10 Gigabit
+m5d.4xlarge,$1.864,16,64 GiB,2 x 300 NVMe SSD,Up to 10 Gigabit
