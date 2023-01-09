@@ -57,51 +57,7 @@ def time_me(f):
         logger.debug(f"function {f.__name__} ET: {time.time() - t_i}s")
     return _timer
 
-seconds_to_timer = lambda x: f"{floor(x/60)}m:{x%60:.2f}s ({x} seconds)"
-
-class MyScreen:
-    """neato way to show what is going on in program"""
-    PADDING_AMT = 1
-    def __init__(self, w=None, h=None) -> None:
-        self.w, self.h = os.get_terminal_size()
-        self._static_w = None
-        self._static_h = None
-        if w is not None:
-            self._static_w = w
-            self.w = int(w)
-        if h is not None:
-            self._static_h = h
-            self.h = int(h)
-        self.lines = []
-        for il in range(self.h):
-            self.lines.append([])
-            self.set_line(il, f"{il})...")
-        self.draw_screen()
-    def _get_term_size(self):
-        self.w, self.h = os.get_terminal_size()
-        if self._static_h:
-            self.h = self._static_h
-        if self._static_w:
-            self.w = self._static_w
-    def draw_line(self,lineno:int, msg: str):
-        self.set_line(lineno=lineno, msg=msg)
-        self.draw_screen()
-    def set_line(self,lineno:int, msg: str):
-        if len(msg) > self.w - MyScreen.PADDING_AMT:
-            logger.warning("message exceeds termsize and could ruin your day")
-            logger.debug(f"message len before trun: {len(msg)}")
-            msg = msg[:self.w - MyScreen.PADDING_AMT]
-            logger.debug(f"message len after trun: {len(msg)}")
-            msg += '\033[0m'
-            logger.debug(f"message len after color add: {len(msg)}")
-        self.lines[lineno] = msg 
-    def clear(self):
-        [print() for _ in self.lines]
-    def draw_screen(self):
-        for l in self.lines:
-            print(''.join(l)+ " "*(self.w - len(l) - MyScreen.PADDING_AMT) + '\n', end='')
-        for l in self.lines:
-            print("\x1b[1A", end='')
+seconds_to_timer = lambda x: f"{floor(x/60)}m:{x%60:.1000f}s ({x} seconds)"
 
 class Instance:
     def __init__(self, region: str, operating_system:str, instance_type: str , cost_per_hr:str , cpu_ct:str , ram_size:str , storage_type:str , network_throughput: str) -> None:
@@ -702,7 +658,7 @@ if __name__ == '__main__':
 
     scrapers = []
     tgt_oses, tgt_regions = EC2Scraper.get_available_regions_and_os(config)
-    tgt_oses = ['Linux', 'Windows']
+    # tgt_oses = ['Linux', 'Windows']
     # tgt_regions = ['us-east-1','us-east-2','us-west-1','us-west-2',]
     thread_tgts = []
     for o in tgt_oses:
