@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from copy import copy
 import threading
 import argparse
+from multiprocessing import cpu_count
 
 from pyautogui import hotkey
 from selenium.webdriver.common.by import By
@@ -548,16 +549,10 @@ class EC2Scraper:
                     f = tgt_csv_data_dir / f"{region}.csv"
                     with f.open('w') as cf:
                         fieldnames = Instance.get_csv_fields()
-                        # don't need these fields, they are included in the filepath
-                        fieldnames.remove("region")
-                        fieldnames.remove("operating_system")
                         writer = csv.DictWriter(cf, fieldnames=fieldnames)
                         writer.writeheader()
                         for inst in stuff:
-                            row = inst.as_dict()
-                            row.pop("region")
-                            row.pop("operating_system")
-                            writer.writerow(row)
+                            writer.writerow(inst.as_dict())
                     _et = ceil(time.time() - self.t_prog_start)
                     et = seconds_to_timer(_et)
                     logger.info(f"{et} - processed {len(stuff)} {_os} ({o_num+1}/{len(tgt_operating_systems)}) instances for {region} ({r_num+1}/{len(tgt_regions)}) in {t_region_scrape} seconds.")
@@ -601,12 +596,17 @@ if __name__ == '__main__':
     t_main = time.time()
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--thread-count", default=1, action='store', type=int, help='number of threads (Selenium drivers) to use')
+    parser.add_argument("--compress", required=False, action='store_true', help='program compresses resulting data, e.g. <os_name>_<date>.bz2.zip')
     args = parser.parse_args()
 
     if args.thread_count < 1:
         NUM_THREADS = 1
+    elif args.thread_count > cpu_count():
+        logger.warning("Using {} threads instead of requested {}".format(cpu_count(), args.thread_count))
+        NUM_THREADS = cpu_count()
     else:
         NUM_THREADS = args.thread_count
+
     LOG_FILE = 'scrape_ec2.log'
     OPERATING_SYSTEMS = None # 'None' to scrape ['Linux', 'Windows']
     REGIONS = None # 'None' to scrape all regions
@@ -670,7 +670,8 @@ if __name__ == '__main__':
     # blocks until all threads have finished running, and thread_tgts is exhausted
     thread_thing.run_threads(thread_tgts)
 
-    compress_data(config.csv_data_dir / config.human_date)
+    if args.compress:
+        compress_data(config.csv_data_dir / config.human_date)
     t_prog_tot = time.time() - t_main
     print(f"Program finished in {seconds_to_timer(time.time() - t_main)}")
     with open('metric-data.txt', 'a') as md:
