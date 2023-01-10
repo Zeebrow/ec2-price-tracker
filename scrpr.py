@@ -14,6 +14,7 @@ from copy import copy
 import threading
 import argparse
 from multiprocessing import cpu_count
+import signal
 
 from pyautogui import hotkey
 from selenium.webdriver.common.by import By
@@ -35,6 +36,10 @@ logger = logging.getLogger(__name__)
 # classes and functions
 ###############################################################################
 human_date: str = lambda ts: datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+
+def catch_ctrl_c(sig, frame):
+    logger.error("Received SIGINT")
+signal.signal(signal.SIGINT, catch_ctrl_c)
 
 @dataclass
 class Config:
@@ -621,7 +626,7 @@ if __name__ == '__main__':
     AWS_PROFILE = 'quickhost-ci-admin'
 
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     logging.getLogger('selenium.*').setLevel(logging.WARNING)
     logging.getLogger('selenium.webdriver.remote.remote_connection').setLevel(logging.WARNING)
     logging.getLogger('urllib3').setLevel(logging.WARNING)
