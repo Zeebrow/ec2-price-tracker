@@ -1,51 +1,46 @@
-# https://www.simplilearn.com/tutorials/python-tutorial/selenium-with-python
 import time
 from datetime import datetime
 import csv
 from pathlib import Path
 from math import floor, ceil
-from typing import List, Any
+from typing import List
 import shutil
 import zipfile
-import os
 import logging
 from dataclasses import dataclass
 from copy import copy
 import threading
 import argparse
 from multiprocessing import cpu_count
-import signal
+# 99% sure catching SIGINT hangs Selenium 
+#import signal
+import json
 
-from pyautogui import hotkey
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as ec
 from selenium import webdriver
-import selenium.common.exceptions
 
 """
 Scrapes pricing information for EC2 instance types for available regions.
 Data for all regions (28) of a single operating system uses between 588K - 712K of disk space.
 """
 logger = logging.getLogger(__name__)
+DEBUG_LOG_INSTANCE_COUNT = 0
 
 ###############################################################################
 # classes and functions
 ###############################################################################
-human_date: str = lambda ts: datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
-
-def catch_ctrl_c(sig, frame):
-    logger.error("Received SIGINT")
-signal.signal(signal.SIGINT, catch_ctrl_c)
+timestamp: int = floor(time.time())
+# human_date: str = lambda ts: datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+human_date: str = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
 
 @dataclass
 class Config:
     log_file: str = 'scrape_ec2.log' # None to supress log output
     csv_data_dir: Path = Path('csv-data/ec2')
-    timestamp: int = floor(time.time())
+    # timestamp: int = floor(time.time())
     page_load_delay: int = 5 #seconds
     wait_between_commands: int = 1 #seconds
     url: str = "https://aws.amazon.com/ec2/pricing/on-demand/"
@@ -54,7 +49,8 @@ class Config:
     upload_bucket_name: str = 'quickhost-pricing-data'
     aws_profile: str = 'quickhost-ci-admin'
     t_prog_start: float = time.time()
-    human_date = human_date(timestamp)
+    # human_date = human_date(timestamp)
+    human_date = human_date
 
 def time_me(f):
     def _timer(*args, **kwargs):
@@ -66,7 +62,7 @@ def time_me(f):
 seconds_to_timer = lambda x: f"{floor(x/60)}m:{x%60:.1000f}s ({x} seconds)"
 
 class Instance:
-    def __init__(self, region: str, operating_system:str, instance_type: str , cost_per_hr:str , cpu_ct:str , ram_size:str , storage_type:str , network_throughput: str) -> None:
+    def __init__(self, datestamp: str, region: str, operating_system:str, instance_type: str , cost_per_hr:str , cpu_ct:str , ram_size:str , storage_type:str , network_throughput: str) -> None:
         self.region = region
         self.operating_system = operating_system
         self.instance_type = instance_type
@@ -75,6 +71,8 @@ class Instance:
         self.ram_size = ram_size
         self.storage_type = storage_type
         self.network_throughput = network_throughput
+        # YYYY-MM-DD
+        self.datestamp = datestamp 
 
     def __repr__(self) -> str:
         return f"{self.instance_type} {self.operating_system} {self.region}"
@@ -82,6 +80,7 @@ class Instance:
     @classmethod
     def get_csv_fields(self):
         return [
+            "date",
             "instance_type",
             "operating_system",
             "region",
@@ -93,6 +92,7 @@ class Instance:
         ]
     def as_dict(self):
         return {
+            "date": self.datestamp,
             "instance_type": self.instance_type,
             "operating_system": self.operating_system,
             "region": self.region,
@@ -106,6 +106,7 @@ class Instance:
 class ThreadDivvier:
     """
     Starts scraping using `thread_count` number of Selenium drivers
+    Thanks @zippy
     """
     def __init__(self, config: Config, thread_count=2) -> None:
         logger.debug("init ThreadDivvier")
@@ -148,18 +149,6 @@ class EC2Scraper:
 
     class NavSection:
         ON_DEMAND_PRICING = "On-Demand Pricing"
-        DATA_TRANSFER = "Data Transfer"
-        DATA_TRANSFER_WITHIN_THE_SAME_AWS_REGION = "Data Transfer within the same AWS Region"
-        EBS_OPTIMIZED_INSTANCES = "EBS-Optimized Instances"
-        ELASTIC_IP_ADDRESSES = "Elastic IP Addresses"
-        CARRIER_IP_ADDRESSES = "Carrier IP Addresses"
-        ELASTIC_LOAD_BALANCING = "Elastic Load Balancing"
-        ON_DEMAND_CAPACITY_RESERVATIONS = "On-Demand Capacity Reservations"
-        T2_T3_T4G_UNLIMITED_MODE_PRICING = "T2/T3/T4g Unlimited Mode Pricing"
-        AMAZON_CLOUDWATCH = "Amazon CloudWatch"
-        AMAZON_ELASTIC_BLOCK_STORE = "Amazon Elastic Block Store"
-        AMAZON_EC2_AUTO_SCALING = "Amazon EC2 Auto Scaling"
-        AWS_GOVCLOUD_REGION = "AWS GovCloud Region"
 
     @time_me
     def __init__(self, _id, config: Config):
@@ -176,8 +165,6 @@ class EC2Scraper:
         self.t_prog_start = config.t_prog_start
         self.log_file = config.log_file
         self.csv_data_dir = config.csv_data_dir
-        self.timestamp = config.timestamp
-        self.page_load_delay = config.page_load_delay
         self.wait_between_commands = config.wait_between_commands
         self.url = config.url
         self.human_date = config.human_date
@@ -193,7 +180,8 @@ class EC2Scraper:
             self.driver = webdriver.Firefox(service=driverService, options=options)
             self.waiter = WebDriverWait(self.driver, 10)
             self.driver.get(self.url)
-            logger.debug(f"beginning in {str(self.page_load_delay)} seconds...")
+            # logger.debug(f"beginning in {str(self.page_load_delay)} seconds...")
+            logger.debug("Initializing worker with id {}".format(self._id))
             self.nav_to(self.NavSection.ON_DEMAND_PRICING)
             self.waiter.until(ec.visibility_of_element_located((By.ID, "iFrameResizer0")))
             self.iframe = self.driver.find_element('id', "iFrameResizer0")
@@ -204,19 +192,6 @@ class EC2Scraper:
             self.driver.close()
 
     @classmethod
-    def zoom_browser_cm(self):
-        logger.debug("begin zoom broweser")
-        for _ in range(6):
-            hotkey('ctrl', '-')
-        time.sleep(0.5)
-
-    def zoom_browser(self):
-        logger.debug("begin zoom broweser")
-        for _ in range(6):
-            hotkey('ctrl', '-')
-        time.sleep(2)
-
-    @classmethod
     def nav_to_cm(self, driver: webdriver.Firefox, section: NavSection):
         logger.debug("begin nav_to")
         """select a section to mimic scrolling"""
@@ -225,7 +200,7 @@ class EC2Scraper:
             for elem in sidebar.find_elements(By.XPATH, 'div/a'):
                 if elem.text.strip() == section:
                     elem.click()
-                    # wait for fancy scroll
+                    #@@@ wait for fancy scroll
                     time.sleep(1)
                     return
         except Exception as e:
@@ -242,7 +217,7 @@ class EC2Scraper:
             for elem in sidebar.find_elements(By.XPATH, 'div/a'):
                 if elem.text.strip() == section:
                     elem.click()
-                    # wait for fancy scroll
+                    #@@@ wait for fancy scroll
                     time.sleep(2)
                     return
         except Exception as e:
@@ -294,7 +269,7 @@ class EC2Scraper:
     @classmethod
     def get_available_regions_and_os(self, config: Config) -> List[str]:
         results = {}
-        #@@@ what if a region is not available for a particular OS?
+        #@@ what if a region becomes not available for a particular OS?
         logger.debug(f"get regions and os")
         options = webdriver.FirefoxOptions()
         options.binary_location = '/usr/bin/firefox-esr'
@@ -303,11 +278,9 @@ class EC2Scraper:
         driver = webdriver.Firefox(service=driverService, options=options)
         try:
             driver.get(config.url)
-            logger.debug(f"beginning in {str(config.page_load_delay)} seconds...")
             time.sleep(config.page_load_delay)
             iframe = driver.find_element('id', "iFrameResizer0")
             EC2Scraper.nav_to_cm(driver, EC2Scraper.NavSection.ON_DEMAND_PRICING)
-            # EC2Scraper.zoom_browser_cm()
             driver.switch_to.frame(iframe)
 
             #########
@@ -325,20 +298,6 @@ class EC2Scraper:
             #########
             # Regions
             #########
-            ## region_selection_box = driver.find_element('id', 'awsui-select-1-textbox')
-            # logger.debug("checking for os availability per region")
-            # for _os in available_operating_systems:
-            #     os_selection_box.click()
-            #     #@@@
-            #     os_selection_box.click()
-            #     for os_elem in driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
-            #         if os_elem.text == _os:
-            #             os_elem.click()
-            ##             region_selection_box.click()
-            #             for region_elem in driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
-            #                 results[_os].append(region_elem.text)
-            # for _os in results.keys():
-            #     logger.debug(f"{len(results[_os])} regions for os '{_os}'")
             available_regions = []
             region_selection_box = driver.find_element('id', 'awsui-select-1-textbox')
             region_selection_box.click()
@@ -414,6 +373,7 @@ class EC2Scraper:
         when finished searching, get number of pages.
         then iterate through them with the > arrow until num_pages 
         """
+        global DEBUG_LOG_INSTANCE_COUNT
         logger.debug(f"{self._id} scrape all: {region=} {_os=}")
         try:
             self.lock.acquire()
@@ -444,7 +404,7 @@ class EC2Scraper:
                     for td in tr.find_elements(By.TAG_NAME, "td"):
                         # 0 t3a.xlarge # 1 $0.1699 # 2 4 # 3 16 GiB # 4 EBS Only # 5 Up to 5 Gigabit
                         instance_props.append(td.text)
-                    instance = Instance(region, os, *instance_props)
+                    instance = Instance(human_date, region, _os, *instance_props)
                     rtn.append(instance)
                 time.sleep(0.2)
 
@@ -459,15 +419,17 @@ class EC2Scraper:
                 f.unlink()
             with f.open('w') as cf:
                 fieldnames = Instance.get_csv_fields()
-                # don't need these fields, they are included in the filepath
-                fieldnames.remove("region")
-                fieldnames.remove("operating_system")
                 writer = csv.DictWriter(cf, fieldnames=fieldnames)
                 writer.writeheader()
+                if DEBUG_LOG_INSTANCE_COUNT == 0:
+                    print(json.dumps(fieldnames, indent=2))
+                    logger.debug(json.dumps(fieldnames, indent=2))
                 for inst in rtn:
                     row = inst.as_dict()
-                    row.pop("region")
-                    row.pop("operating_system")
+                    if DEBUG_LOG_INSTANCE_COUNT == 0:
+                        print(json.dumps(row, indent=2))
+                        logger.debug(json.dumps(row, indent=2))
+                        DEBUG_LOG_INSTANCE_COUNT += 1
                     writer.writerow(row)
             logger.debug(f"saved data to file: '{f}'")
             self.driver.switch_to.default_content()
@@ -616,7 +578,7 @@ if __name__ == '__main__':
     OPERATING_SYSTEMS = None # 'None' to scrape ['Linux', 'Windows']
     REGIONS = None # 'None' to scrape all regions
     CSV_DATA_DIR = Path('csv-data/ec2')
-    TIMESTAMP = floor(time.time())
+    # TIMESTAMP = floor(time.time())
     PAGE_LOAD_DELAY = 5 #seconds
     WAIT_BETWEEN_COMMANDS = 1 #seconds
     URL = "https://aws.amazon.com/ec2/pricing/on-demand/"
@@ -626,7 +588,7 @@ if __name__ == '__main__':
     AWS_PROFILE = 'quickhost-ci-admin'
 
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     logging.getLogger('selenium.*').setLevel(logging.WARNING)
     logging.getLogger('selenium.webdriver.remote.remote_connection').setLevel(logging.WARNING)
     logging.getLogger('urllib3').setLevel(logging.WARNING)
@@ -637,29 +599,30 @@ if __name__ == '__main__':
         logger.addHandler(fh)
     else:
         logger.disabled = True
+    logger.info("Starting program")
 
     config = Config(
         log_file=LOG_FILE,
         csv_data_dir = CSV_DATA_DIR, 
-        timestamp = TIMESTAMP,
-        page_load_delay = PAGE_LOAD_DELAY,
+        # timestamp = TIMESTAMP,
+        page_load_delay = PAGE_LOAD_DELAY, #@ remove
         wait_between_commands = WAIT_BETWEEN_COMMANDS,
         url = URL,
-        timezone = TIMEZONE, 
-        upload_bucket_region = UPLOAD_BUCKET_REGION, 
-        upload_bucket_name = UPLOAD_BUCKET_NAME,
-        aws_profile = AWS_PROFILE,
+        timezone = TIMEZONE, #@ remove
+        upload_bucket_region = UPLOAD_BUCKET_REGION, #@ remove
+        upload_bucket_name = UPLOAD_BUCKET_NAME,#@ remove
+        aws_profile = AWS_PROFILE,#@ remove
     )
     logger.debug(f"{config.log_file=}")
     logger.debug(f"{config.csv_data_dir=}")
-    logger.debug(f"{config.timestamp=}")
-    logger.debug(f"{config.page_load_delay=}")
+    # logger.debug(f"{config.timestamp=}")
+    logger.debug(f"{config.page_load_delay=}")#@ remove
     logger.debug(f"{config.wait_between_commands=}")
     logger.debug(f"{config.url=}")
-    logger.debug(f"{config.timezone=}")
-    logger.debug(f"{config.upload_bucket_region=}")
-    logger.debug(f"{config.upload_bucket_name=}")
-    logger.debug(f"{config.aws_profile=}")
+    logger.debug(f"{config.timezone=}")#@ remove
+    logger.debug(f"{config.upload_bucket_region=}")#@ remove
+    logger.debug(f"{config.upload_bucket_name=}")#@ remove
+    logger.debug(f"{config.aws_profile=}")#@ remove
 
     scrapers = []
     tgt_oses, tgt_regions = EC2Scraper.get_available_regions_and_os(config)
@@ -678,7 +641,20 @@ if __name__ == '__main__':
     if args.compress:
         compress_data(config.csv_data_dir / config.human_date)
     t_prog_tot = time.time() - t_main
-    print(f"Program finished in {seconds_to_timer(time.time() - t_main)}")
+
+    p = Path('csv-data/ec2/{}'.format(human_date))
+    p.mkdir()
+    t_size = 0
+    for _os in p.iterdir():
+        if not _os.is_dir():
+            continue
+        for csvf in _os.iterdir():
+            t_size += csvf.stat().st_size
+
     with open('metric-data.txt', 'a') as md:
-        md.write(f"{NUM_THREADS}\t{len(tgt_oses)}\t{len(tgt_regions)}\t{t_prog_init:.2f}\t{t_prog_tot:.2f}\n")
+        md.write(f"{NUM_THREADS}\t{len(tgt_oses)}\t{len(tgt_regions)}\t{t_prog_init:.2f}\t{t_prog_tot:.2f}\t{(t_size / 1024 / 1024):.3f}M\n")
+    
+    print(f"Program finished in {seconds_to_timer(time.time() - t_main)}")
+    logger.info(f"Program finished in {seconds_to_timer(time.time() - t_main)}")
+
     
