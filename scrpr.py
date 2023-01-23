@@ -3,7 +3,7 @@ from datetime import datetime
 import csv
 from pathlib import Path
 from math import floor
-from typing import List
+from typing import List, Dict
 import zipfile
 import logging
 from dataclasses import dataclass
@@ -13,6 +13,7 @@ import argparse
 from multiprocessing import cpu_count
 # 99% sure catching SIGINT hangs Selenium 
 #import signal
+import psutil
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.service import Service
@@ -100,15 +101,44 @@ class ThreadDivvier:
         Initialize one EC2Scraper for use in a thread, creating thread_count EC2Scraper instances with identical configuration.
         Each thread manages its own Selenium.WebDriver.
         """
-        logger.debug("init ThreadDivvier")
+        logger.debug("init ThreadDivvier with {} threads".format(thread_count))
         self.thread_count = thread_count
         self.drivers: List[EC2Scraper] = []
+        self.config = config
         self.done = False
+        self.init_scrapers()
+
+    def init_scraper(self, thread_id: int, config: EC2ScraperConfig):
+        logger.debug(f"starting {thread_id=}")
+        self.drivers.append(EC2Scraper(_id=thread_id, config=config))
+        logger.debug(f"initialized {thread_id=}")
+
+    def init_scrapers(self):
+        """
+        Initialize scrapers one at a time.
+        As scrapers become initialized, give them to the ThreadDivvier's drivers pool.
+        """
         next_id = 0
-        for _ in range(thread_count):
-            driver = EC2Scraper(_id=next_id, config=config)
+        # start init for each driver
+        logger.info("initializing {} drivers".format(self.thread_count))
+        for _ in range(self.thread_count):
+            logger.debug("initializing new driver with id '{}'".format(next_id))
+            t = threading.Thread(
+                name=next_id,
+                target=self.init_scraper,
+                args=(next_id, self.config),
+                daemon=False,
+            )
             next_id += 1
-            self.drivers.append(driver)
+            t.start()
+
+        # wait until each driver's init is finished
+        # drivers are only added to self.init_drivers *after* they are done being initialized
+        # i.e. when __init__ has finished
+        while len(self.drivers) != self.thread_count:
+            pass
+        logger.info("done initializing {} drivers".format(self.thread_count))
+        return
 
     def run_threads(self, arg_queue: List[tuple]):
         """
@@ -131,7 +161,7 @@ class ThreadDivvier:
                     logger.debug(f"worker id {d._id} running new thread {'-'.join(args)}")
         # determine when all threads have finished
         threads_finished = []
-        logger.debug("waiting for last threads to finish juuuust a sec")
+        logger.info("waiting for last threads to finish juuuust a sec")
         while len(threads_finished) != self.thread_count:
             for d in self.drivers:
                 if not d.lock.locked() and d._id not in threads_finished:
@@ -173,7 +203,6 @@ class EC2Scraper:
             self.nav_to(self.NavSection.ON_DEMAND_PRICING)
             self.waiter.until(ec.visibility_of_element_located((By.ID, "iFrameResizer0")))
             self.iframe = self.driver.find_element('id', "iFrameResizer0")
-            logger.info("finished init")
             self.lock.release()
         except Exception as e:
             logger.critical(e)
@@ -198,7 +227,7 @@ class EC2Scraper:
 
     def nav_to(self, section: NavSection):
         """Select a section to mimic scrolling"""
-        logger.debug("begin nav_to")
+        logger.debug(f"{self._id} begin nav_to")
         try: 
             sidebar = self.driver.find_element(By.CLASS_NAME, 'lb-sidebar-content')
             for elem in sidebar.find_elements(By.XPATH, 'div/a'):
@@ -251,7 +280,7 @@ class EC2Scraper:
             self.driver.close()
             logger.error(e)
             raise e
-        raise Exception(f"No such operating system: '{_os}'")
+        raise Exception(f"{self._id} No such operating system: '{_os}'")
 
     @classmethod
     def get_available_regions_and_os(self, config: EC2ScraperConfig) -> List[tuple]:
@@ -312,7 +341,7 @@ class EC2Scraper:
             self.driver.switch_to.default_content()
         except Exception as e:
             self.driver.close()
-            logger.error(e)
+            logger.error(f"{self._id}: {e}")
             raise e
         return available_regions
 
@@ -350,7 +379,7 @@ class EC2Scraper:
             self.driver.switch_to.default_content()
         except Exception as e:
             self.driver.close()
-            logger.error(e)
+            logger.error(f"{self._id}: {e}")
             raise e
         raise Exception(f"No such region: '{region}'")
 
@@ -359,7 +388,7 @@ class EC2Scraper:
         Select an operating system and region to fill the pricing page table with data, scrape it, and save it to a csv file.
         CSV files are saved in a parent directory of self.csv_data_dir, by date then by operating system. e.g. '<self.csv_data_dir>/2023-01-18/Linux'
         """
-        logger.debug(f"{self._id} scrape all: {region=} {_os=}")
+        logger.info(f"{self._id} scrape all: {region=} {_os=}")
         try:
             self.lock.acquire()
             self.select_operating_system(_os)
@@ -391,6 +420,7 @@ class EC2Scraper:
                         # 0 t3a.xlarge # 1 $0.1699 # 2 4 # 3 16 GiB # 4 EBS Only # 5 Up to 5 Gigabit
                         instance_props.append(td.text)
                     rtn.append(Instance(human_date, region, _os, *instance_props))
+                # @@@
                 time.sleep(0.2)
 
             #################
@@ -412,8 +442,9 @@ class EC2Scraper:
             self.driver.switch_to.default_content()
             self.lock.release()
         except Exception as e:
+            self.driver.quit()
             self.driver.close()
-            logger.error(e)
+            logger.error(f"{self._id} {e}")
             raise e
         return rtn
 
@@ -433,6 +464,7 @@ class EC2Scraper:
 
     def wait_for_menus_to_close(self):
         try:
+            logger.debug(f"{self._id} ensuring menus are closed")
             # vCPU selection box
             self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='vCPU_single']")))
             # Instance Type selection box
@@ -445,7 +477,7 @@ class EC2Scraper:
             self.waiter.until(ec.visibility_of_element_located((By.TAG_NAME, "awsui-table-pagination")))
         except Exception as e:
             self.driver.close()
-            logger.error(e)
+            logger.error(f"{self._id} {e}")
             raise e
 
 def compress_data(data_dir: str|Path):
@@ -468,13 +500,14 @@ if __name__ == '__main__':
     t_main = time.time()
     human_date: str = datetime.fromtimestamp(floor(time.time())).strftime("%Y-%m-%d")
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--thread-count", default=1, action='store', type=int, help='number of threads (Selenium drivers) to use')
+    parser.add_argument("-t", "--thread-count", default=cpu_count(), action='store', type=int, help='number of threads (Selenium drivers) to use')
+    parser.add_argument("--overdrive-madness", action='store_true', help='allow going over the maximum number of threads')
     parser.add_argument("--compress", required=False, action='store_true', help='program compresses resulting data, e.g. <os_name>_<date>.bz2.zip')
     args = parser.parse_args()
 
     if args.thread_count < 1:
         NUM_THREADS = 1
-    elif args.thread_count > cpu_count():
+    elif args.thread_count > cpu_count() and not args.overdrive_madness:
         logger.warning("Using {} threads instead of requested {}".format(cpu_count(), args.thread_count))
         NUM_THREADS = cpu_count()
     else:
