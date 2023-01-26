@@ -21,6 +21,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as ec
 from selenium import webdriver
 
+#from urllib3 import exceptions as urllib3_exceptions
+
 """
 Scrapes pricing information for EC2 instance types for available regions.
 """
@@ -93,8 +95,7 @@ class Instance:
 
 class ThreadDivvier:
     """
-    Do all the concurrency
-    Thanks for the idea @zippy
+    Converts machine time processing data into developer time debugging exceptions.
     """
     def __init__(self, config: EC2ScraperConfig, thread_count=cpu_count()) -> None:
         """
@@ -109,7 +110,6 @@ class ThreadDivvier:
         self.init_scrapers()
 
     def init_scraper(self, thread_id: int, config: EC2ScraperConfig):
-        logger.debug(f"starting {thread_id=}")
         self.drivers.append(EC2Scraper(_id=thread_id, config=config))
         logger.debug(f"initialized {thread_id=}")
 
@@ -173,7 +173,6 @@ class EC2Scraper:
         """3+ lines of code"""
         ON_DEMAND_PRICING = "On-Demand Pricing"
 
-    @time_me
     def __init__(self, _id, config: EC2ScraperConfig):
         logger.debug("init EC2 Scraper")
         self.lock = threading.Lock()
@@ -191,16 +190,22 @@ class EC2Scraper:
         self.url = config.url
         self.human_date = config.human_date
 
+        options = webdriver.FirefoxOptions()
+        options.binary_location = '/usr/bin/firefox-esr'
+        options.headless = True
+        driverService = Service('/usr/local/bin/geckodriver')
+        self.driver = webdriver.Firefox(service=driverService, options=options)
         try: 
-            options = webdriver.FirefoxOptions()
-            options.binary_location = '/usr/bin/firefox-esr'
-            options.headless = True
-            driverService = Service('/usr/local/bin/geckodriver')
-            self.driver = webdriver.Firefox(service=driverService, options=options)
             self.waiter = WebDriverWait(self.driver, 10)
             self.driver.get(self.url)
             logger.debug("Initializing worker with id {}".format(self._id))
-            self.nav_to(self.NavSection.ON_DEMAND_PRICING)
+            # self.nav_to(self.NavSection.ON_DEMAND_PRICING)
+            logger.debug(f"{self._id} begin nav_to")
+            sidebar = self.driver.find_element(By.CLASS_NAME, 'lb-sidebar-content')
+            for elem in sidebar.find_elements(By.XPATH, 'div/a'):
+                if elem.text.strip() == self.NavSection.ON_DEMAND_PRICING:
+                    elem.click()
+                    break
             self.waiter.until(ec.visibility_of_element_located((By.ID, "iFrameResizer0")))
             self.iframe = self.driver.find_element('id', "iFrameResizer0")
             self.lock.release()
@@ -210,7 +215,10 @@ class EC2Scraper:
 
     @classmethod
     def nav_to_cm(self, driver: webdriver.Firefox, section: NavSection):
-        """Select a section to mimic scrolling"""
+        """
+        Select a section to mimic scrolling
+        NOTE: contains try/catch for driver
+        """
         logger.debug("begin nav_to")
         try:
             sidebar = driver.find_element(By.CLASS_NAME, 'lb-sidebar-content')
@@ -227,26 +235,19 @@ class EC2Scraper:
 
     def nav_to(self, section: NavSection):
         """Select a section to mimic scrolling"""
-        logger.debug(f"{self._id} begin nav_to")
-        try: 
-            sidebar = self.driver.find_element(By.CLASS_NAME, 'lb-sidebar-content')
-            for elem in sidebar.find_elements(By.XPATH, 'div/a'):
-                if elem.text.strip() == section:
-                    elem.click()
-                    time.sleep(2)
-                    return
-        except Exception as e:
-            self.driver.close()
-            logger.error(e)
-            raise e
-        raise Exception(f"no such section '{section}'")
+        pass
 
     def get_available_operating_systems(self) -> List[str]:
-        """Get all operating systems for filtering data"""
+        """
+        Get all operating systems for filtering data
+        NOTE: contains try/catch for self.driver
+        NOTE: switches to iframe
+        """
         logger.debug(f"{self._id} get available os")
         try:
             self.driver.switch_to.frame(self.iframe)
             available_operating_systems = []
+            self.waiter.until(ec.visibility_of_element_located((By.ID, "awsui-select-2")))
             os_selection_box = self.driver.find_element(By.ID, 'awsui-select-2')
             # expand menu
             os_selection_box.click()
@@ -263,10 +264,15 @@ class EC2Scraper:
         return available_operating_systems
         
     def select_operating_system(self, _os: str):
-        """Select an operating system for filtering data"""
+        """
+        Select an operating system for filtering data
+        NOTE: contains try/catch for self.driver
+        NOTE: switches to iframe
+        """
         logger.debug(f"{self._id} select os {_os}")
         try:
             self.driver.switch_to.frame(self.iframe)
+            self.waiter.until(ec.visibility_of_element_located((By.ID, "awsui-select-2")))
             os_selection_box = self.driver.find_element(By.ID, 'awsui-select-2')
             os_selection_box.click()
             for elem in self.driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
@@ -284,7 +290,11 @@ class EC2Scraper:
 
     @classmethod
     def get_available_regions_and_os(self, config: EC2ScraperConfig) -> List[tuple]:
-        """Return a tuple of all the possible combinations of operating systems and regions for which to iterate over"""
+        """
+        Return a tuple of all the possible combinations of operating systems and regions for which to iterate over
+        NOTE: contains try/catch for driver
+        NOTE: switches to iframe
+        """
         results = {}
         #@@ what if a region becomes not available for a particular OS?
         logger.debug(f"get regions and os")
@@ -327,7 +337,11 @@ class EC2Scraper:
         return (available_operating_systems, available_regions)
 
     def get_available_regions(self) -> List[str]:
-        """Get all aws regions for filtering data"""
+        """
+        Get all aws regions for filtering data
+        NOTE: contains try/catch for self.driver
+        NOTE: switches to iframe
+        """
         logger.debug(f"{self._id} get regions")
         try:
             self.driver.switch_to.frame(self.iframe)
@@ -346,7 +360,11 @@ class EC2Scraper:
         return available_regions
 
     def select_aws_region_dropdown(self, region: str):
-        """Set the table of data to display for a given aws region"""
+        """
+        Set the table of data to display for a given aws region
+        NOTE: contains try/catch for self.driver
+        NOTE: switches to iframe
+        """
         logger.debug(f"{self._id} select region '{region}'")
         try:
             self.driver.switch_to.frame(self.iframe)
@@ -387,12 +405,14 @@ class EC2Scraper:
         """
         Select an operating system and region to fill the pricing page table with data, scrape it, and save it to a csv file.
         CSV files are saved in a parent directory of self.csv_data_dir, by date then by operating system. e.g. '<self.csv_data_dir>/2023-01-18/Linux'
+        NOTE: contains try/catch for self.driver
+        NOTE: switches to iframe
         """
         logger.info(f"{self._id} scrape all: {region=} {_os=}")
+        self.lock.acquire()
+        self.select_operating_system(_os)
+        self.select_aws_region_dropdown(region)
         try:
-            self.lock.acquire()
-            self.select_operating_system(_os)
-            self.select_aws_region_dropdown(region)
             self.driver.switch_to.frame(self.iframe)
             rtn: List[Instance] = []
             # On EC2 pricing page:
@@ -449,7 +469,11 @@ class EC2Scraper:
         return rtn
 
     def get_result_count_test(self) -> int:
-        """get the 'Viewing ### of ### Available Instances' count to check our results"""
+        """
+        get the 'Viewing ### of ### Available Instances' count to check our results
+        NOTE: contains try/catch for self.driver
+        NOTE: switches to iframe
+        """
         logger.debug(f"{self._id} get results count")
         try:
             self.driver.switch_to.frame(self.iframe)
@@ -463,6 +487,10 @@ class EC2Scraper:
         return int(t.split("of")[1].split(" available")[0].strip())
 
     def wait_for_menus_to_close(self):
+        """
+        Blocks until any of the clickable dialog boxes in this script have returned to a collapsed state before returning.
+        NOTE: contains try/catch for self.driver
+        """
         try:
             logger.debug(f"{self._id} ensuring menus are closed")
             # vCPU selection box
