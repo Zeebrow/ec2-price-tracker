@@ -4,7 +4,7 @@ Gather EC2 price info by scraping <https://aws.amazon.com/ec2/pricing/on-demand/
 
 # data
 
-Each run of the program creates about 12M (181K compressed) of csv data.
+Each run of the program creates about 13M (181K compressed) of csv data.
 
 ## example data
 
