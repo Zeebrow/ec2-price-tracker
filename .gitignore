@@ -1,4 +1,4 @@
-venv/*
+venv*
 *.swp
 *.tar*
 *.zip
@@ -8,3 +8,6 @@ ec2-pricing-csv-data/*
 csv-data/*
 *.db
 *.hg*
+*ipynb
+*.sh
+metric-data.txt
