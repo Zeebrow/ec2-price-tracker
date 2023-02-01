@@ -21,6 +21,7 @@ from multiprocessing import cpu_count
 # import signal
 import os
 import shutil
+from uuid import uuid1
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.service import Service
@@ -516,7 +517,12 @@ def compress_data(data_dir: str, human_date: str):
     logger.debug(f"{csv_data_tree.absolute()=}")
     old_cwd = os.getcwd()
     os.chdir(data_dir)
-    with zipfile.ZipFile(f"{human_date}.zip", 'w', compression=zipfile.ZIP_BZIP2) as zf:
+    u = uuid1()
+    if Path(f"{human_date}.zip").exists():
+        logger.warning(f"Removing existing zip file '{human_date}.zip'")
+
+        Path(f"{human_date}.zip").rename(f"{u}-{human_date}.zip.bkup")
+    with zipfile.ZipFile(f"{human_date}.zip", 'w', compression=zipfile.ZIP_DEFLATED) as zf:
         for i in Path(human_date).iterdir():
             # i.name is the operating system name
             if i.is_dir():
@@ -533,6 +539,8 @@ def compress_data(data_dir: str, human_date: str):
                         logger.error(f"Error writing compressed data: {e}")
             logger.debug(f"{i.name=} {i.stat()=}")
             logger.info(f"Compressed {_csv_ct} files of {i.name} os data")
+    if Path(f"{u}-{human_date}.zip.bkup").exists():
+        Path(f"{u}-{human_date}.zip.bkup").unlink()
     os.chdir(old_cwd)
     shutil.rmtree(csv_data_tree)
 
@@ -543,18 +551,55 @@ if __name__ == '__main__':
     human_date: str = datetime.fromtimestamp(floor(time.time())).strftime("%Y-%m-%d")
 
     parser = argparse.ArgumentParser()
-    log_args = parser.add_mutually_exclusive_group()
-    log_args.add_argument("-l", "--log-file", required=False, default='scrpr.log', help='log output destination file')
-    log_args.add_argument("--stdout", required=False, action='store_true', help='write log records to stdout')
-    parser.add_argument("-t", "--thread-count", default=cpu_count(), action='store', type=int, help='number of threads (Selenium drivers) to use')
-    parser.add_argument("--overdrive-madness", action='store_true', help='allow going over the maximum number of threads')
-    parser.add_argument("-c", "--compress", required=False, action='store_true', help='program compresses resulting data, e.g. <os_name>_<date>.bz2.zip')
-    parser.add_argument("-r", "--regions", action='append', required=False, default=None, help='comma-separated list of regions to scrape')
-    parser.add_argument("-o", "--oses", action='append', required=False, default=None, help='comma-separated list of oprating systems to scrape')
-    parser.add_argument("-d", "--data-dir", required=False, default='csv-data/ec2', help='base directory for output directory tree')
-    parser.add_argument("-m", "--metric-data-file", required=False, default='metric-data.txt', help='base directory for output directory tree')
-    parser.add_argument("-v", required=False, action='count', default=0, help='log level, 0=warning, 1=info, 2+=debug')
-
+    parser.add_argument("--log-file",
+        required=False,
+        default='scrpr.log',
+        help="log output destination file. '--log-file=console' will instead print to your system's stderr stream.")
+    parser.add_argument("-j", "--thread-count",
+        default=cpu_count(),
+        action='store',
+        type=int,
+        help="number of threads (Selenium drivers) to use")
+    parser.add_argument("--overdrive-madness",
+        action='store_true',
+        help=f"allow going over the recommended number of threads (number of threads for your machine, {cpu_count()})")
+    parser.add_argument("--compress",
+        required=False,
+        action='store_true',
+        help="program compresses resulting data, e.g. <os_name>_<date>.zip")
+    parser.add_argument("--regions",
+        type=str,
+        required=False,
+        default=None,
+        help="comma-separated list of regions to scrape (omit=scrape all)",
+        metavar='region-1,region-2,...')
+    parser.add_argument("--operating-systems",
+        type=str,
+        required=False,
+        default=None,
+        help="comma-separated list of oprating systems to scrape (omit=scrape all)",
+        metavar="Linux,Windows,'Windows with SQL Web'")
+    parser.add_argument("--get-operating-systems",
+        action='store_true',
+        required=False,
+        help="print a list of the available operating systems and exit")
+    parser.add_argument("--get-regions",
+        action='store_true',
+        required=False,
+        help="print a list of the available regions and exit")
+    parser.add_argument("--data-dir",
+        required=False,
+        default='csv-data/ec2',
+        help="base directory for output directory tree or zip file")
+    parser.add_argument("--metric-data-file",
+        required=False,
+        default='metric-data.txt',
+        help="base directory for output directory tree")
+    parser.add_argument("-v",
+        required=False,
+        action='count',
+        default=0,
+        help='log level, None=warning, -v=info, -vv=debug')
     args = parser.parse_args()
 
     ##########################################################################
@@ -571,7 +616,7 @@ if __name__ == '__main__':
     if args.v > 1:
         logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(name)s : %(threadName)s : %(funcName)s : %(message)s')
-    if args.stdout:
+    if args.log_file == 'console':
         sh = logging.StreamHandler()
         sh.setFormatter(formatter)
         logger.addHandler(sh)
@@ -582,6 +627,59 @@ if __name__ == '__main__':
 
     logger.info("Starting program with PID {}".format(os.getpid()))
     logger.debug(f"{args=}")
+    logger.error("error test")
+
+    config = DataCollectorConfig(
+        human_date=human_date,
+        log_file=args.log_file,
+        csv_data_dir=args.data_dir,
+    )
+    logger.debug(f"{config.human_date=}")
+    logger.debug(f"{config.log_file=}")
+    logger.debug(f"{config.csv_data_dir=}")
+    logger.debug(f"{config.url=}")
+
+    ##########################################################################
+    # regions and operating systems
+    ##########################################################################
+    # get list of operating_system-region pair tuples
+    tgt_oses, tgt_regions = DataCollector.get_available_regions_and_os(config)
+
+    if args.get_operating_systems:
+        print("Available Operating Systems:")
+        for _os in tgt_oses:
+            if ' ' in _os:
+                print(f"\t'{_os}'")
+            else:
+                print(f"\t{_os}")
+    if args.get_regions:
+        print("Available Regions:")
+        for r in tgt_regions:
+            print(f"\t{r}")
+    if args.get_operating_systems or args.get_regions:
+        exit(0)
+
+    if args.regions is not None:
+        logger.debug("Validating provided regions...")
+        for r in args.regions.split(','):
+            if r == '':
+                continue
+            if r not in tgt_regions:
+                [print(f"{n}:\t{R}") for n, R in enumerate(tgt_regions)]
+                print(f"supplied region '{r}' not in list")
+                exit(1)
+        tgt_regions = args.regions.split(',')
+
+    if args.operating_systems is not None:
+        logger.debug("Validating provided operating systems...")
+        for o in args.operating_systems.split(','):
+            if o == '':
+                continue
+            if o not in tgt_oses:
+                [print(f"{n}:\t{O}") for n, O in enumerate(tgt_oses)]
+                print(f"supplied operating system '{o}' not in list")
+                exit(1)
+        tgt_oses = args.operating_systems.split(',')
 
     ##########################################################################
     # threads
@@ -594,38 +692,6 @@ if __name__ == '__main__':
         num_threads = cpu_count()
     else:
         num_threads = args.thread_count
-
-    config = DataCollectorConfig(
-        human_date=human_date,
-        log_file=args.log_file,
-        csv_data_dir=args.data_dir,
-    )
-    logger.debug(f"{config.human_date=}")
-    logger.debug(f"{config.log_file=}")
-    logger.debug(f"{config.csv_data_dir=}")
-    logger.debug(f"{config.url=}")
-
-    # get list of operating_system-region pair tuples
-    tgt_oses, tgt_regions = DataCollector.get_available_regions_and_os(config)
-    if args.regions is not None:
-        logger.debug("Validating provided regions...")
-        for r in args.regions:
-            if r not in tgt_regions:
-                [print(f"{n}:\t{R}") for n, R in enumerate(tgt_regions)]
-                print(f"supplied region '{r}' not in list")
-                exit(1)
-        tgt_regions = args.regions
-
-    if args.oses is not None:
-        logger.debug("Validating provided operating systems...")
-        for o in args.oses:
-            if o not in tgt_oses:
-                [print(f"{n}:\t{O}") for n, O in enumerate(tgt_oses)]
-                print(f"supplied operating system '{o}' not in list")
-                exit(1)
-        tgt_oses = args.oses
-    print(tgt_regions)
-    print(tgt_oses)
 
     thread_tgts = []
     for o in tgt_oses:

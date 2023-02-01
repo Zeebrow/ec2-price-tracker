@@ -14,5 +14,6 @@ RUN pip install -r requirements.txt
 RUN echo 'docker run --rm -d -v $HOME/.local/share/scrpr/logs:/logs -v $HOME/.local/share/scrpr/csv-data:/csv-data local/scrpr:latest -t 8 --compress'
 
 ENV DISPLAY=:99
+ENV TZ=America/New_York
 
 ENTRYPOINT ["python3", "scrpr.py", "--data-dir", "csv-data/ec2", "--log-file", "logs/scrpr.log", "--metric-data-file", "logs/metric-data.txt"]
