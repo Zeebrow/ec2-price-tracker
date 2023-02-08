@@ -26,3 +26,8 @@ date,instance_type,operating_system,region,cost_per_hr,cpu_ct,ram_size_gb,storag
 
 *maybe...*
 
+# docker
+
+Isolating Firefox to a container seems to improve performance on my machine (LTS Ubuntu 22.04). 
+
+https://docs.docker.com/engine/security/rootless/
