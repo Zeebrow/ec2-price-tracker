@@ -6,6 +6,7 @@ from math import floor
 from typing import List, Tuple
 import zipfile
 import logging
+from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass
 from copy import copy
 import threading
@@ -35,6 +36,7 @@ from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException
 import psycopg2
 from psycopg2.errors import UniqueViolation
+from psycopg2 import sql
 
 from ec2.instance import Instance, PGInstance
 
@@ -760,6 +762,10 @@ def compress_data(data_dir: str, human_date: str):
 
 def do_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--follow",
+        required=False,
+        action='store_true',
+        help="print logs to stdout in addition to the log file")
     parser.add_argument("--log-file",
         required=False,
         default=(default_log_dir / 'scrpr.log'),
@@ -808,9 +814,21 @@ def do_args():
         required=False,
         action='count',
         default=0,
-        help='log level, None=warning, -v=info, -vv=debug')
+        help='increase logging output')
     return parser.parse_args()
 
+
+def get_table_size(db_config: DatabaseConfig, table='ec2_instance_pricing'):
+    s = sql.SQL("SELECT pg_total_relation_size('public.{}')".format(table))
+    conn = psycopg2.connect(db_config.get_dsl())
+    curr = conn.cursor()
+    curr.execute(s)
+    r = curr.fetchone()[0]
+    conn.close()
+    logger.debug("'{}' table is {:.2f} Mb ({} bytes)".format(
+        table, r / 1024 / 1024, r 
+    ))
+    return r
 
 if __name__ == '__main__':
     t_main = time.time()
@@ -820,10 +838,6 @@ if __name__ == '__main__':
     default_log_dir = Path(os.path.expanduser('~')) / '.local' / 'share' / 'scrpr' / 'logs'
 
     args = do_args()
-
-    if not Path(args.data_dir).exists():
-        print(f"no such directory '{args.data_dir}'")
-        exit(1)
 
     ##########################################################################
     # logging
@@ -838,27 +852,34 @@ if __name__ == '__main__':
     else:
         logger.setLevel(logging.DEBUG)
         formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(name)s : %(threadName)s (%(thread)s) : %(funcName)s : %(message)s')
-    if args.log_file == 'console':
+    if args.follow:
         sh = logging.StreamHandler()
         sh.setFormatter(formatter)
         logger.addHandler(sh)
-    else:
-        fh = logging.FileHandler(str(args.log_file))
-        fh.setFormatter(formatter)
-        logger.addHandler(fh)
+    fh = logging.FileHandler(str(args.log_file))
+    fh = RotatingFileHandler(str(args.log_file),
+        maxBytes=5_000_000,  # 5MB
+        backupCount=5
+    )
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
 
     logger.info("Starting program with PID {}".format(os.getpid()))
 
-    pg_config = DatabaseConfig()
-    pg_config.load()
-    if pg_config:
+    if not Path(args.data_dir).exists():
+        logger.error(f"no such directory '{args.data_dir}'")
+        exit(1)
+
+    db_config = DatabaseConfig()
+    db_config.load()
+    if db_config:
         # @@@ only test connection when?
-        conn = psycopg2.connect(pg_config.get_dsl())
+        conn = psycopg2.connect(db_config.get_dsl())
         conn.close()
         logger.debug("db connection ok")
 
     config = DataCollectorConfig(
-        db_config=pg_config,
+        db_config=db_config,
         human_date=human_date,
         log_file=args.log_file,
         # csv_data_dir=args.data_dir,
@@ -867,7 +888,10 @@ if __name__ == '__main__':
         logger.debug("{}={}".format(arg, val))
     for k, v in config.__dict__.items():
         logger.debug("{}={}".format(k, v))
-    logger.debug("{}".format(str(pg_config)))
+    logger.debug("{}".format(str(db_config)))
+
+    s_start = get_table_size(db_config)
+    exit()
 
     ##########################################################################
     # regions and operating systems
@@ -950,7 +974,8 @@ if __name__ == '__main__':
         else:
             # SELECT pg_size_pretty(pg_total_relation_size('public.ec2_instance_pricing'));  # kB, mB
             # SELECT pg_total_relation_size('public.ec2_instance_pricing');
-            t_size = 420.69
+            t_size = curr.fetchone()
+            conn.close()
 
     t_prog_tot = time.time() - t_main
     metric_data = {
