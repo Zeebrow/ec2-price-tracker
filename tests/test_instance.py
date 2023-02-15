@@ -17,12 +17,11 @@ def test_pginstance_stores(db):
     )
     curr = db.cursor()
 
-    instance.store(db)
+    instance.store(db, table='ec2_instance_pricing_test')
     with pytest.raises(UniqueViolation):
         instance.store(db)
     db.commit()
-    curr.execute("SELECT * FROM ec2_instance_pricing WHERE region = 'test-region-1'")
+    curr.execute("SELECT * FROM ec2_instance_pricing_test WHERE region = 'test-region-1'")
     r = curr.fetchone()
     assert r is not None
     curr.close()
-

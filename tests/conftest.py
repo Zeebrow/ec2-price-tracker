@@ -1,10 +1,12 @@
 import psycopg2
+from psycopg2 import sql
 import os
 import tempfile
 import shutil
+import json
 
-from unittest import mock
 import pytest
+import dotenv
 
 from selenium.webdriver.common.by import By
 # from selenium.webdriver.firefox.service import Service
@@ -15,13 +17,19 @@ from selenium.webdriver.common import actions, action_chains
 from selenium import webdriver
 
 from ec2.instance import PGInstance
-from scrpr import DataCollector, DataCollectorConfig, PostgresConfig
+import scrpr
+# from scrpr import DataCollector, DataCollectorConfig, DatabaseConfig
+
+
+TEST_CONFIG_FILE = '.env-test'
+TEST_TABLE_NAME = 'ec2_instance_pricing_test'
 
 
 def pytest_addoption(parser):
     parser.addoption(
         "--run-selenium", action="store_true", default=False, help="run tests which require selenium"
     )
+
 
 def pytest_collection_modifyitems(config, items):
     if config.getoption("--run-selenium"):
@@ -35,44 +43,46 @@ def pytest_collection_modifyitems(config, items):
 with open(os.path.join(os.path.dirname(__file__), 'ec2_data.sql'), 'rb') as f:
     _data_sql = f.read().decode('utf8')
 
+
 @pytest.fixture
 def db():
     """
-    Creates a new table and populates it with test data.
-    The table is created and destroyed with each test the fixture is used in.
+    Connects to a Postgres database, creates a new table, and populates it with
+    test data.  The table is created and destroyed with each test the fixture is
+    used in.
     """
-    c = psycopg2.connect("host=localhost dbname=scrpr_test user=scrpr_test")
+    config = dotenv.dotenv_values(TEST_CONFIG_FILE)
+    assert "_test" in config.get("db_dbname")
+
+    dsl = "host={} port={} dbname={} user={} password={}".format(
+        config.get("db_host", "localhost"),
+        config.get("db_port", 5432),
+        config.get("db_dbname", "scrpr_test"),
+        config.get("db_user", "scrpr_test"),
+        config.get("db_password", None)
+    )
+
+    c = psycopg2.connect(dsl)
     curr = c.cursor()
     curr.execute(_data_sql)
     c.commit()
 
     yield c
-
-    curr.execute("DROP TABLE ec2_instance_pricing")
+    drop_query = sql.SQL(f"DROP TABLE {TEST_TABLE_NAME}")
+    curr.execute(drop_query)
     c.commit()
     c.close()
 
 
 @pytest.fixture
-def pg_database_config():
-    yield PostgresConfig(
-        host='localhost',
-        port=5432,
-        dbname='scrpr_test',
-        user='scrpr_test',
-    )
-
-
-@pytest.fixture
-def data_collector_config(request, pg_database_config):
+def data_collector_config(pg_dbconfig):
     data_dir = tempfile.mkdtemp()
     _, log_file = tempfile.mkstemp()
     # print(f"=====> {request.function.__name__} {log_file}")
-    yield DataCollectorConfig(
+    yield scrpr.DataCollectorConfig(
         human_date='1901-01-01',
         csv_data_dir=data_dir,
-        db_config=pg_database_config,
-        log_file=log_file,
+        db_config=pg_dbconfig,
         headless=True,
         window_w=1920,
         window_h=1080,
@@ -98,7 +108,7 @@ def chrome_driver():
 
 @pytest.fixture
 def data_collector(request, data_collector_config):
-    dc = DataCollector('test', config=data_collector_config)
+    dc = scrpr.DataCollector('test', config=data_collector_config)
     os.makedirs('screenshots', 0o0755, exist_ok=True)
 
     yield dc
@@ -110,9 +120,43 @@ def data_collector(request, data_collector_config):
 
 @pytest.fixture
 def pg_dbconfig():
-    yield PostgresConfig(
-        host='localhost',
-        port=5432,
-        dbname='scrpr_test',
-        user='scrpr_test'
-    )
+    """valid config"""
+    config = scrpr.DatabaseConfig()
+    assert config.load('.env-test')
+    assert '_test' in config.user
+    assert '_test' in config.dbname
+    assert config.password is not None
+
+    yield config
+
+@pytest.fixture
+def fake_pg_config():
+    """returns gibberish"""
+    fd, dotenvf = tempfile.mkstemp()
+    with open(dotenvf, 'w') as de:
+        de.write(os.linesep.join([
+            "log_file=~/.local/share/scrpr/csv-data/ec2",
+            "console_log=1",
+            "thread_count=8",
+            "ignore_max_thread_warning=0",
+            "# omit to collect data for all",
+            "# regions=us-east-1,ap-southeast-4,eu-central-2",
+            "# operating_systems=Linux,Windows",
+            "",
+            "Save_csv=1",
+            "Csv_data_dir=~/.local/share/scrpr/csv-data/ec2",
+            "Compress_csv=1",
+            "",
+            "Save_db=0",
+
+            "db_host = some-host",
+            "db_port = 1234",
+            "db_user = some-user",
+            "db_password = password123four",
+            "db_dbname = some_db",
+        ]))
+    
+    yield dotenvf
+
+    os.close(fd)
+    os.unlink(dotenvf)

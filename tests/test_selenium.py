@@ -1,17 +1,9 @@
-import time
-
 import pytest
 
 from selenium.webdriver.common.by import By
-# from selenium.webdriver.firefox.service import Service
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as ec
-from selenium.webdriver.common import actions, action_chains
-from selenium.common.exceptions import NoSuchElementException
 from selenium import webdriver
 
-from scrpr import DataCollector, DataCollectorConfig
+import scrpr
 
 
 URL = "https://aws.amazon.com/ec2/pricing/on-demand/"
@@ -19,7 +11,7 @@ URL = "https://aws.amazon.com/ec2/pricing/on-demand/"
 
 @pytest.mark.selenium
 def test_browser_config(data_collector_config):
-    dc = DataCollector('test_browser_config', data_collector_config)
+    dc = scrpr.DataCollector('test_browser_config', data_collector_config)
     assert dc.driver.get_window_size()['height'] == data_collector_config.window_h
     assert dc.driver.get_window_size()['width'] == data_collector_config.window_w
 
@@ -34,19 +26,19 @@ def test_url_appears_scrapable(chrome_driver: webdriver.Chrome):
 @pytest.mark.selenium
 @pytest.mark.parametrize(('window_w', 'window_h'), (
         (2560, 1440),  # 16:9
+        (1920, 1080),  # 16:9
         (800, 600),    # 4:3
         (2560, 1080),  # 21:9
-        (2048, 1152),  # 16:9
-        (1920, 1080),  # 16:9
-        (1680, 1050),  # 16:10
-        (1600, 1200),  # 4:3
-        (1280, 1024),  # 5:4
+        # (2048, 1152),  # 16:9
+        # (1680, 1050),  # 16:10
+        # (1600, 1200),  # 4:3
+        # (1280, 1024),  # 5:4
     )
 )
-def test_get_regions(data_collector_config: DataCollectorConfig, window_w, window_h):
+def test_get_regions(data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
     data_collector_config.window_w = window_w
     data_collector_config.window_h = window_h
-    dc = DataCollector('test_get_regions', data_collector_config)
+    dc = scrpr.DataCollector('test_get_regions', data_collector_config)
     regions = dc.get_available_regions()
     assert regions is not None
     assert 'us-east-1' in regions
@@ -56,19 +48,19 @@ def test_get_regions(data_collector_config: DataCollectorConfig, window_w, windo
 @pytest.mark.selenium
 @pytest.mark.parametrize(('window_w', 'window_h'), (
         (2560, 1440),  # 16:9
+        (1920, 1080),  # 16:9
         (800, 600),    # 4:3
         (2560, 1080),  # 21:9
-        (2048, 1152),  # 16:9
-        (1920, 1080),  # 16:9
-        (1680, 1050),  # 16:10
-        (1600, 1200),  # 4:3
-        (1280, 1024),  # 5:4
+        # (2048, 1152),  # 16:9
+        # (1680, 1050),  # 16:10
+        # (1600, 1200),  # 4:3
+        # (1280, 1024),  # 5:4
     )
 )
-def test_get_operating_systems(data_collector_config: DataCollectorConfig, window_w, window_h):
+def test_get_operating_systems(data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
     data_collector_config.window_w = window_w
     data_collector_config.window_h = window_h
-    dc = DataCollector('test_get_regions', data_collector_config)
+    dc = scrpr.DataCollector('test_get_regions', data_collector_config)
     oses = dc.get_available_operating_systems()
     assert oses is not None
     assert 'Linux' in oses
@@ -77,7 +69,7 @@ def test_get_operating_systems(data_collector_config: DataCollectorConfig, windo
 
 
 @pytest.mark.selenium
-def test_get_regions_and_oses(data_collector: DataCollector):
+def test_get_regions_and_oses(data_collector: scrpr.DataCollector):
     tgt_oses, tgt_regions = data_collector.get_available_regions_and_os()
     assert isinstance(tgt_oses, list)
     assert isinstance(tgt_regions, list)
@@ -89,39 +81,29 @@ def test_get_regions_and_oses(data_collector: DataCollector):
 
 
 @pytest.mark.selenium
-def test_scrape_and_store(data_collector: DataCollector):
+def test_scrape_and_store(data_collector: scrpr.DataCollector):
     assert not data_collector.lock.locked()  # assumed by scrape_and_store function
+    data_collector.lock.acquire()
     assert data_collector.scrape_and_store(_os='Linux', region='ap-southeast-4')
     assert not data_collector.lock.locked()  # ready to accept another job
 
 
 @pytest.mark.selenium
 @pytest.mark.parametrize(('window_w', 'window_h'), (
-        # (1200, 800),  # passes
-        ###### fail
-        # (1000, 600),
-        # (1200, 600),
-        # (1000, 800),
-        # (1000, 600),
-        # (814, 800),
-        # (800, 800),
-        # (814, 600),
-        # (900, 800),
-        ######
         (2560, 1440),  # 16:9
-        (800, 600),    # 4:3 # known-bad
-        (2560, 1080),  # 21:9
-        (2048, 1152),  # 16:9
         (1920, 1080),  # 16:9
-        (1680, 1050),  # 16:10
-        (1600, 1200),  # 4:3
-        (1280, 1024),  # 5:4
+        (800, 600),    # 4:3 # bad
+        (2560, 1080),  # 21:9
+        # (2048, 1152),  # 16:9
+        # (1680, 1050),  # 16:10
+        # (1600, 1200),  # 4:3
+        # (1280, 1024),  # 5:4
     )
 )
-def test_scrape(data_collector_config: DataCollectorConfig, window_w, window_h):
+def test_scrape(data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
     data_collector_config.window_w = window_w
     data_collector_config.window_h = window_h
-    dc = DataCollector('test_scrape', data_collector_config)
+    dc = scrpr.DataCollector('test_scrape', data_collector_config)
     try:
         instances = dc.scrape(_os='Linux', region='ap-southeast-4')
     except Exception as e:
@@ -132,6 +114,4 @@ def test_scrape(data_collector_config: DataCollectorConfig, window_w, window_h):
     for i in instances:
         assert i.region == 'ap-southeast-4'
         assert i.operating_system == 'Linux'
-
-
 

@@ -13,3 +13,6 @@ csv-data/*
 metric-data.txt
 *.csv
 screenshots/*.png
+.env*
+*.sql
+*.sqlite

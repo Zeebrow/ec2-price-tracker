@@ -1,4 +1,3 @@
-#!/home/zeebrow/sandcastle/aws-cost-calculator/venv/bin/python3
 import time
 from datetime import datetime
 import csv
@@ -24,6 +23,7 @@ import os
 import shutil
 from uuid import uuid1
 from contextlib import contextmanager
+import dotenv
 
 from selenium.webdriver.common.by import By
 # from selenium.webdriver.firefox.service import Service
@@ -59,16 +59,33 @@ class ScrprException(Exception):
     pass
 
 
-@dataclass
-class PostgresConfig:
+class DatabaseConfig:
     """
-    TODO: socket connection
+    NOTE local configuration for connecting to Postgres (.pgpass, pg_ident.conf,
+    environment variables, etc) will supply connection DSL values. 
+
+    NOTE django uses psycopg3. : https://github.com/django/django/blob/main/django/db/backends/postgresql/client.py
     """
-    host: str
-    port: str
-    dbname: str
-    user: str
-    _password: str = None
+    def __init__(self, host=None, port=None, dbname=None, user=None):
+        self.host = host
+        self.port = port
+        self.dbname = dbname
+        self.user = user
+        self._password = None
+    
+    def load(self, env_file='.env'):
+        config = dotenv.dotenv_values(env_file)
+        if config:
+            self.host = config.get("db_host", "localhost")
+            self.port = int(config.get("db_port", 5432))
+            self.dbname = config.get("db_dbname", "scrpr")
+            self.user = config.get("db_user", "scrpr")
+            self.password = config.get("db_password", None)
+            return True
+        else:
+            logger.warning("No configuration found at '{}'".format(env_file))
+            return False
+        
 
     def __repr__(self) -> str:
         if self.password:
@@ -102,7 +119,7 @@ class DataCollectorConfig:
     Required options to instantiate an DataCollector.
     """
     human_date: str
-    db_config: PostgresConfig = None
+    db_config: DatabaseConfig = None
     csv_data_dir: str = None
     log_file: str = 'scrpr.log'
     url: str = 'https://aws.amazon.com/ec2/pricing/on-demand/'
@@ -229,9 +246,9 @@ class DataCollector:
                 window_w=config.window_w,
                 window_h=config.window_h
             )
+            self.prep_driver()
         else:
             self.driver = _test_driver
-        self.prep_driver()
         logger.debug("Finished init of thread {} without errors".format(self._id))
 
     def get_available_regions_and_os(self) -> List[tuple]:
@@ -621,8 +638,8 @@ class DataCollector:
             if self.csv_data_dir is not None:
                 logger.info("{} TODO storing data to csv file".format(self._id))
 
-            self.lock.release()
             # @@@
+            self.lock.release()
             return True
 
             ################# # CSV #################
@@ -832,12 +849,13 @@ if __name__ == '__main__':
 
     logger.info("Starting program with PID {}".format(os.getpid()))
 
-    pg_config = PostgresConfig(
-        host='localhost',
-        port=5432,
-        dbname='scrpr',
-        user='scrpr'
-    )
+    pg_config = DatabaseConfig()
+    pg_config.load()
+    if pg_config:
+        # @@@ only test connection when?
+        conn = psycopg2.connect(pg_config.get_dsl())
+        conn.close()
+        logger.debug("db connection ok")
 
     config = DataCollectorConfig(
         db_config=pg_config,
@@ -847,10 +865,9 @@ if __name__ == '__main__':
     )
     for arg, val in vars(args).items():
         logger.debug("{}={}".format(arg, val))
-    for k, v in config.__dict__:
+    for k, v in config.__dict__.items():
         logger.debug("{}={}".format(k, v))
-    for k, v in pg_config.__dict__:
-        logger.debug("{}={}".format(k, v))
+    logger.debug("{}".format(str(pg_config)))
 
     ##########################################################################
     # regions and operating systems

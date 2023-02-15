@@ -1,6 +1,0 @@
-*.log
-*.tar*
-*.zip
-*.csv
-tmp/
-venv*
