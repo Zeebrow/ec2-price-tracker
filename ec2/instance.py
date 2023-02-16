@@ -9,6 +9,7 @@ from contextlib import contextmanager
 logger = logging.getLogger(__name__)
 
 
+# @@@ What is the point of having an 'Instance' type ?
 class Instance(object):
     __slots__ = ("datestamp", "region", "operating_system", "instance_type", "cost_per_hr", "cpu_ct", "ram_size", "storage_type", "network_throughput")
 
@@ -40,7 +41,7 @@ class Instance(object):
     def __repr__(self) -> str:
         return f"{self.datestamp} {self.instance_type} {self.operating_system} {self.region}"
 
-    def as_dict(self):
+    def as_dict(self) -> OrderedDict:
         return OrderedDict({
             "date": self.datestamp,
             "instance_type": self.instance_type,
@@ -56,22 +57,15 @@ class Instance(object):
 
 class PGInstance(Instance):
     """
-    Allow instance data to be stored efficiently.
+    Allow instance data to be stored in a Postgres database
     """
 
     def __init__(self, datestamp: str, region: str, operating_system: str, instance_type: str, cost_per_hr: str, cpu_ct: str, ram_size: str, storage_type: str, network_throughput: str) -> None:
         super().__init__(datestamp, region, operating_system, instance_type, cost_per_hr, cpu_ct, ram_size, storage_type, network_throughput)
 
-    def get_region_ids(self, conn):
-        curr = conn.cursor()
-        curr.execute("SELECT * FROM regions_lookup")
-        regions = curr.fetchall()
-        PGInstance.regions_lookup = {r: i for i, r in regions}
-        curr.close()
-
     def store(self, conn, table='ec2_instance_pricing'):
         """
-        Throws UniqueViolation 
+        Throws UniqueViolation, caught in scrpr.DataCollector.store_postgres()
         """
         curr = conn.cursor()
         ins = sql.SQL("""
@@ -84,6 +78,7 @@ class PGInstance(Instance):
         conn.commit()
         curr.close()
 
+    # @@ might could move to Instance
     def prep_data(self) -> Tuple[str, str, str, str, float, int, float, str, str]:
         ready_data = self.as_dict()
         ready_data['cost_per_hr'] = float(self.cost_per_hr.replace('$', ''))

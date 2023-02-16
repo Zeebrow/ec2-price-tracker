@@ -1,8 +1,10 @@
 # scrape cost data for ec2
 
-Gather EC2 price info by scraping <https://aws.amazon.com/ec2/pricing/on-demand/>
+Use a headless Chrome browser to gather EC2 price info: <https://aws.amazon.com/ec2/pricing/on-demand/>
 
 # data
+
+Store data in a collection of csv files, or in a Postgres database table.
 
 Each run of the program creates about 13M (181K compressed) of csv data.
 
@@ -21,13 +23,3 @@ date,instance_type,operating_system,region,cost_per_hr,cpu_ct,ram_size_gb,storag
 2023-01-18,t4g.micro,Linux,us-east-1,$0.0084,2,1 GiB,EBS Only,Up to 5 Gigabit
 2023-01-18,t4g.small,Linux,us-east-1,$0.0168,2,2 GiB,EBS Only,Up to 5 Gigabit
 ```
-
-# api url
-
-*maybe...*
-
-# docker
-
-Isolating Firefox to a container seems to improve performance on my machine (LTS Ubuntu 22.04). 
-
-https://docs.docker.com/engine/security/rootless/

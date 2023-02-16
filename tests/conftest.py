@@ -8,14 +8,6 @@ import json
 import pytest
 import dotenv
 
-from selenium.webdriver.common.by import By
-# from selenium.webdriver.firefox.service import Service
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as ec
-from selenium.webdriver.common import actions, action_chains
-from selenium import webdriver
-
 from ec2.instance import PGInstance
 import scrpr
 # from scrpr import DataCollector, DataCollectorConfig, DatabaseConfig
@@ -90,25 +82,10 @@ def data_collector_config(pg_dbconfig):
     shutil.rmtree(data_dir)
     os.unlink(log_file)
 
-@pytest.fixture
-def chrome_driver():
-    options = webdriver.ChromeOptions()
-    options.binary_location = '/usr/bin/google-chrome'
-    options.add_argument('-headless')
-    options.add_argument("window-size=1920,1080")
-    driverService = Service('/usr/local/bin/chromedriver')
-    driver = webdriver.Chrome(service=driverService, options=options)
-    driver.implicitly_wait(10)
-
-    yield driver
-
-    driver.quit()
-
-
 
 @pytest.fixture
-def data_collector(request, data_collector_config):
-    dc = scrpr.DataCollector('test', config=data_collector_config)
+def ec2_data_collector(request, data_collector_config):
+    dc = scrpr.EC2DataCollector(request.function.__name__, config=data_collector_config)
     os.makedirs('screenshots', 0o0755, exist_ok=True)
 
     yield dc
@@ -117,6 +94,7 @@ def data_collector(request, data_collector_config):
     dc.driver.save_screenshot(os.path.join('screenshots', fname))
     dc.driver.close()
     del dc
+
 
 @pytest.fixture
 def pg_dbconfig():
@@ -160,3 +138,29 @@ def fake_pg_config():
 
     os.close(fd)
     os.unlink(dotenvf)
+
+
+@pytest.fixture
+def dc_no_driver(request, data_collector_config):
+    dc = scrpr.DataCollector(request.function.__name__, config=data_collector_config, _test_driver="nodriver")
+    yield dc
+
+@pytest.fixture
+def data_dir():
+    csv_data_dir = tempfile.mkdtemp()
+    yield csv_data_dir
+    shutil.rmtree(csv_data_dir)
+
+
+@pytest.fixture
+def one_date_instances():
+    return [
+        scrpr.Instance("1999-12-31", "test-region-1", "test os 1", "ts1.type1", "$0.010203004", 1, "2 GiB", "test storage type 1", "test throughput 1"),
+        scrpr.Instance("1999-12-31", "test-region-1", "test os 1", "ts1.type2", "$0.010203004", 1, "2 GiB", "test storage type 1", "test throughput 1"),
+        scrpr.Instance("1999-12-31", "test-region-1", "test os 2", "ts1.type1", "$0.010203004", 1, "2 GiB", "test storage type 1", "test throughput 1"),
+        scrpr.Instance("1999-12-31", "test-region-1", "test os 2", "ts1.type2", "$0.010203004", 1, "2 GiB", "test storage type 1", "test throughput 1"),
+        scrpr.Instance("1999-12-31", "test-region-2", "test os 1", "ts1.type1", "$0.010203004", 1, "2 GiB", "test storage type 1", "test throughput 1"),
+        scrpr.Instance("1999-12-31", "test-region-2", "test os 1", "ts1.type2", "$0.010203004", 1, "2 GiB", "test storage type 1", "test throughput 1"),
+        scrpr.Instance("1999-12-31", "test-region-2", "test os 2", "ts1.type1", "$0.010203004", 1, "2 GiB", "test storage type 1", "test throughput 1"),
+        scrpr.Instance("1999-12-31", "test-region-2", "test os 2", "ts1.type2", "$0.010203004", 1, "2 GiB", "test storage type 1", "test throughput 1"),
+    ]

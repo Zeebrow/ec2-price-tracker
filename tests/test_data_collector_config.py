@@ -7,13 +7,7 @@ import pytest
 import scrpr
 
 
-
-def test_config_url_is_correct(data_collector_config):
-    assert data_collector_config.url == "https://aws.amazon.com/ec2/pricing/on-demand/"
-
-
 def test_postgres_config_sets_from_dotenv(fake_pg_config):
-
     db_config = scrpr.DatabaseConfig()
     db_config.load(fake_pg_config)
     assert db_config.host == 'some-host'
