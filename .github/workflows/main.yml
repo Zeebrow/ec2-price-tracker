@@ -42,7 +42,7 @@ jobs:
           ALTER ROLE scrpr_test WITH PASSWORD '${{ secrets.scrpr_test_password }}';
           CREATE DATABASE scrpr_test WITH OWNER scrpr_test;
           GRANT ALL ON DATABASE scrpr_test TO scrpr_test;
-EOF
+        EOF
 
         PGPASSWORD=${{ secrets.scrpr_test_password }} psql -h localhost -Uscrpr_test -c 'SELECT 1;'
 
