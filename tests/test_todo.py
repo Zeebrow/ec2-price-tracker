@@ -1,4 +1,5 @@
 import os
+from multiprocessing import cpu_count
 
 import pytest
 
@@ -41,7 +42,7 @@ def test_do_args_defaults_implement_main_config():
     mc_default = scrpr.MainConfig(
         follow=False,
         log_file=os.path.join(default_log_dir, "scrpr.log"),
-        thread_count=24,
+        thread_count=cpu_count(),
         overdrive_madness=False,
         compress=True,
         regions=None,

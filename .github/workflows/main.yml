@@ -26,7 +26,7 @@ jobs:
     - name: start postgres:14 container
       run: docker run -d -p5432:5432 -e POSTGRES_PASSWORD=${{ secrets.postgres_password }} postgres:14
 
-    - name: uhhh
+    - name: setup database
       run: |
         sudo apt install -y postgresql-client-14
         cat <<EOF | PGPASSWORD=${{ secrets.postgres_password }} psql -h localhost -Upostgres 
@@ -38,7 +38,7 @@ jobs:
 
         PGPASSWORD=${{ secrets.scrpr_test_password }} psql -h localhost -Uscrpr_test -c 'SELECT 1;'
 
-    - name: run tests
+    - name: setup commection parameters
       run: |
         cat <<EOF | sed 's/ //g' > .env-test
           db_host=localhost
@@ -47,6 +47,8 @@ jobs:
           db_password=${{ secrets.scrpr_test_password }}
           db_dbname=scrpr_test
         EOF
+
+    - name: run tests
         pytest -s -v tests/
 
     - name: make sure we can get help
