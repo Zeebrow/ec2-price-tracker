@@ -14,11 +14,15 @@ jobs:
         POSTGRES_PASSWORD: ${{ secrets.postgres_password }}
       ports:
         - 5432
-    steps:
-    - uses: actions/checkout@v2
 
   setup_python:
     runs-on: "ubuntu-latest"
+      container:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.postgres_password }}
+        ports:
+          - 5432
     steps:
     - uses: actions/checkout@v2
 
@@ -36,7 +40,6 @@ jobs:
         
     - name: uhh
       run: |
-        sudo apt update -y && sudo apt upgrade -y
         sudo apt install -y postgresql-client-14
         cat <<EOF | PGPASSWORD=${{ secrets.postgres_password }} psql -h localhost -Upostgres 
           CREATE ROLE scrpr_test LOGIN;
