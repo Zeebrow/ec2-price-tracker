@@ -14,17 +14,15 @@ jobs:
         POSTGRES_PASSWORD: ${{ secrets.postgres_password }}
       ports:
         - 5432
-    steps:
-    - uses: actions/checkout@v2
 
   setup_python:
+    container:
+      image: postgres:14
+      env:
+        POSTGRES_PASSWORD: ${{ secrets.postgres_password }}
+      ports:
+        - 5432
     runs-on: "ubuntu-latest"
-      container:
-        image: postgres:14
-        env:
-          POSTGRES_PASSWORD: ${{ secrets.postgres_password }}
-        ports:
-          - 5432
     steps:
     - uses: actions/checkout@v2
 
