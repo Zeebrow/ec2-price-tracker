@@ -1,0 +1,40 @@
+on:
+  push:
+    branches:
+      - 'master'
+env:
+  PROG_NAME: main.py
+
+jobs:
+  test_postgres:
+    runs-on: "ubuntu-latest"
+    container:
+      image: postgres:14
+      env:
+        POSTGRES_PASSWORD: ${{ secrets.postgres_password }}
+      ports:
+        - 5432
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        architecture: 'x64'
+        cache: pip 
+
+    - name: pip install
+      run: pip install -r requirements-test.txt
+
+    - name: run tests
+      run: |
+        flake8
+        #pytest -s -v tests/
+        
+    - name: uhh
+      run: |
+        docker ps -a
+
+
+

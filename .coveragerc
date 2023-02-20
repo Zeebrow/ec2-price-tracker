@@ -1,0 +1,9 @@
+[run]
+branch = True
+command_line = -m pytest --run-selenium tests/
+
+[report]
+show_missing = True
+include = 
+  ./scrpr.py
+  ./ec2/*

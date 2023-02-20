@@ -1,6 +1,3 @@
-import pytest
-from psycopg2.errors import UniqueViolation
-
 from ec2.instance import PGInstance
 
 
@@ -23,6 +20,7 @@ def test_pginstance_repr():
         "test-region-1",
     ])
 
+
 def test_pginstance_stores(db):
     instance = PGInstance(
         "2023-01-01",
@@ -37,10 +35,9 @@ def test_pginstance_stores(db):
     )
     curr = db.cursor()
 
-    instance.store(db, table='ec2_instance_pricing_test')
-    with pytest.raises(UniqueViolation):
-        instance.store(db)
-    db.commit()
+    assert instance.store(db, table='ec2_instance_pricing_test')
+    assert not instance.store(db, table='ec2_instance_pricing_test')  # test returns False on psycopg2.errors.UniqueViolation
+
     curr.execute("SELECT * FROM ec2_instance_pricing_test WHERE region = 'test-region-1'")
     r = curr.fetchone()
     assert r is not None

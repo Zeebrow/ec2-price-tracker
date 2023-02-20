@@ -1,10 +1,8 @@
-import psycopg2
 from psycopg2 import sql
 from psycopg2.errors import UniqueViolation
 from collections import OrderedDict
 from typing import Tuple
 import logging
-from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +51,7 @@ class Instance(object):
             "storage_type": self.storage_type,
             "network_throughput": self.network_throughput,
         })
-    
+
 
 class PGInstance(Instance):
     """
@@ -67,16 +65,20 @@ class PGInstance(Instance):
         """
         Throws UniqueViolation, caught in scrpr.DataCollector.store_postgres()
         """
+        success = True
         curr = conn.cursor()
         ins = sql.SQL("""
             INSERT INTO {table} (pk, date, instance_type, operating_system, region, cost_per_hr, cpu_ct, ram_size_gb, storage_type, network_throughput)
             VALUES (%s, %s,%s,%s,%s,%s,%s,%s,%s,%s)
             """.format(table=table))
-        curr.execute(ins,
-            ('-'.join([self.datestamp, self.region, self.operating_system, self.instance_type]), *self.prep_data())
-        )
-        conn.commit()
-        curr.close()
+        try:
+            curr.execute(ins, ('-'.join([self.datestamp, self.region, self.operating_system, self.instance_type]), *self.prep_data()))
+        except UniqueViolation:
+            success = False
+        finally:
+            conn.commit()
+            curr.close()
+        return success
 
     # @@ might could move to Instance
     def prep_data(self) -> Tuple[str, str, str, str, float, int, float, str, str]:

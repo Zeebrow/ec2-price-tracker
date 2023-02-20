@@ -26,18 +26,16 @@ import shutil
 from uuid import uuid1
 from contextlib import contextmanager
 import dotenv
-import json
+from collections import OrderedDict
 
 from selenium.webdriver.common.by import By
 # from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as ec
-from selenium.webdriver.common import actions, action_chains
+from selenium.webdriver.common import action_chains
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException
 import psycopg2
-from psycopg2.errors import UniqueViolation
 from psycopg2 import sql
 
 from ec2.instance import Instance, PGInstance
@@ -48,25 +46,40 @@ Scrapes pricing information for EC2 instance types for available regions.
 """
 logger = logging.getLogger(__name__)
 ERRORS = []
-ALREADY_EXISTED_COUNT = 0
+# XDG_DATA_HOME = os.path.join(os.path.expanduser('~'), '.local', 'share')
+SCRPR_HOME = os.path.join(os.path.expanduser('~'), '.local', 'share', 'scrpr')
 
 
 ###############################################################################
 # classes and functions
 ###############################################################################
 class ScrprException(Exception):
+    """Not sure if my global ERRORS contraption is a great idea..."""
+
     global ERRORS
 
     def __init__(self, *args: object) -> None:
         super().__init__(*args)
-        ERRORS.append((args,))
-    pass
+        ERRORS.append(*args)
+
+
+class ScrprCritical(Exception):
+    """
+    Use to indicate that a DataCollector's WebDriver needs to be closed or
+    restarted in order to continue.
+    """
+
+    global ERRORS
+
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+        ERRORS.append(*args)
 
 
 class DatabaseConfig:
     """
     NOTE local configuration for connecting to Postgres (.pgpass, pg_ident.conf,
-    environment variables, etc) will supply connection DSL values. 
+    environment variables, etc) will supply connection DSL values.
 
     NOTE django uses psycopg3. : https://github.com/django/django/blob/main/django/db/backends/postgresql/client.py
     """
@@ -76,7 +89,7 @@ class DatabaseConfig:
         self.dbname = dbname
         self.user = user
         self._password = None
-    
+
     def load(self, env_file='.env'):
         config = dotenv.dotenv_values(env_file)
         if config:
@@ -87,9 +100,7 @@ class DatabaseConfig:
             self.password = config.get("db_password", None)
             return True
         else:
-            logger.warning("No configuration found at '{}'".format(env_file))
-            return False
-        
+            raise FileNotFoundError("No configuration found at '{}'".format(env_file))
 
     def __repr__(self) -> str:
         if self.password:
@@ -107,7 +118,7 @@ class DatabaseConfig:
     @password.setter
     def password(self, pw):
         self._password = pw
-    
+
     def get_dsl(self):
         dsl = "host={} port={} dbname={} user={}".format(
             self.host, self.port, self.dbname, self.user
@@ -157,12 +168,17 @@ class ThreadDivvier:
         self.config = config
         self.done = False
         self.init_scrapers()
-    
-    def init_scraper(self, thread_id: int, config: DataCollectorConfig):
-        self.drivers.append(DataCollector(_id=thread_id, config=config))
-        logger.debug(f"initialized {thread_id=}")
 
-    def init_scrapers(self):
+    def init_scraper(self, thread_id: int, config: DataCollectorConfig) -> None:
+        try:
+            # @@@ implying type
+            # this feels like a common problem that I don't have an immediate answer for.
+            self.drivers.append(EC2DataCollector(_id=thread_id, config=config))
+            logger.debug(f"initialized {thread_id=}")
+        except ScrprCritical as e:
+            logger.critical(e, exc_info=True)
+
+    def init_scrapers(self) -> None:
         """
         Initialize scrapers one at a time.
         As scrapers become initialized, give them to the ThreadDivvier's drivers pool.
@@ -233,6 +249,7 @@ class DataCollector:
     """
     Base class for selenium drivers to interface with a ThreadDivvier.
     """
+    data_type_scraped = None
 
     def __init__(self, _id, config: DataCollectorConfig, _test_driver=None):
         logger.debug("init DataCollector")
@@ -248,56 +265,24 @@ class DataCollector:
         self.db_config = config.db_config
 
         if _test_driver is None:
-            self.driver = self.get_driver(
+            self.get_driver(
                 headless=config.headless,
                 window_w=config.window_w,
                 window_h=config.window_h
             )
-            self.prep_driver()
         else:
             self.driver = _test_driver
         logger.debug("Finished init of thread {} without errors".format(self._id))
-
-    def prep_driver(self):
-        delay = 0.5
-        try:
-            # @@@ is this needed?
-            self.waiter = WebDriverWait(self.driver, 10)
-            self.driver.get(self.url)
-            logger.debug("Initializing worker with id {}".format(self._id))
-            logger.debug(f"{self._id} begin nav_to")
-            time.sleep(delay)
-            sidebar = self.driver.find_element(By.CLASS_NAME, 'lb-sidebar-content')
-            logger.debug("sidebar content located")
-            for elem in sidebar.find_elements(By.XPATH, 'div/a'):
-                if elem.text.strip() == self.NavSectionEC2.ON_DEMAND_PRICING:
-                    elem.click()
-                    break
-            logger.debug("navving...")
-            time.sleep(delay)
-            logger.debug("wait untill iFrame located...")
-            self.waiter.until(ec.visibility_of_element_located((By.ID, "iFrameResizer0")))
-            self.iframe = self.driver.find_element('id', "iFrameResizer0")
-            logger.debug("done. waiting 3 seconds before releasing lock...")
-            time.sleep(delay)
-            self.lock.release()
-        except Exception as e:
-            logger.critical("While initializing worker '{}', an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, e), exc_info=True)
-            self.driver.close()
+        self.lock.release()
 
     def get_driver(self, browser_binary='/usr/bin/google-chrome', automation_driver='/usr/local/bin/chromedriver', headless=True, window_w=1920, window_h=1080):
-        # options = webdriver.FirefoxOptions()
-        # options.binary_location = '/usr/bin/firefox-esr'
-        # options.add_argument('-headless')
-        # driverService = Service('/usr/local/bin/geckodriver')
-        # self.driver = webdriver.Firefox(service=driverService, options=options)
         options = webdriver.ChromeOptions()
         options.binary_location = browser_binary
         options.add_argument("window-size={},{}".format(window_w, window_h))
         if headless:
             options.add_argument('-headless')
         driverService = Service(automation_driver)
-        return webdriver.Chrome(service=driverService, options=options)
+        self.driver = webdriver.Chrome(service=driverService, options=options)
 
     def scroll(self, amt):
         action = action_chains.ActionChains(self.driver)
@@ -310,71 +295,38 @@ class EC2DataCollector(DataCollector):
     """
     Instantiates a Selenium WebDriver for Chrome.
     """
+    data_type_scraped = 'ec2'
+
     class NavSectionEC2:
         """3+ lines of code"""
         ON_DEMAND_PRICING = "On-Demand Pricing"
 
     def __init__(self, _id, config: DataCollectorConfig, _test_driver=None):
         super().__init__(_id, config, _test_driver)
+        self.lock.acquire()
+        if _test_driver is None:
+            self.prep_driver()
+        self.lock.release()
 
-    def get_available_regions_and_os(self) -> List[tuple]:
-        """
-        Return a tuple of all the possible combinations of operating systems and regions for which to iterate over
-        NOTE: contains try/catch for driver
-        NOTE: switches to iframe
-        """
+    def prep_driver(self):
         delay = 0.5
-        results = {}
-        # @@ what if an OS isn't available in a region?
-        logger.debug("get regions and os")
         try:
-            # @@@ why?
-            self.driver.refresh()
-            logger.debug("waiting for page to refresh...")
-            time.sleep(5)
-            # @@@ self.iframe?
-            iframe = self.driver.find_element('id', "iFrameResizer0")
-            self.driver.switch_to.frame(iframe)
-
-            #########
-            # OS
-            #########
-            logger.info("getting available operating systems...")
-
-            available_operating_systems = []
-            os_selection_box = self.driver.find_element(By.ID, 'awsui-select-2')
-            os_selection_box.click()
-            for elem in self.driver.find_element(By.ID, 'awsui-select-2-dropdown').find_elements(By.CLASS_NAME, 'awsui-select-option-label'):
-                available_operating_systems.append(elem.text)
-                results[elem.text] = []
-            # collapse
-            logger.debug("got operating systems, collapsing menu...")
+            # @@@ is this needed?
+            self.waiter = WebDriverWait(self.driver, 10)
+            self.driver.get(self.url)
+            logger.debug("Initializing worker with id {}".format(self._id))
+            logger.debug(f"{self._id} begin nav_to")
             time.sleep(delay)
-            os_selection_box.click()
-
-            #########
-            # Regions
-            #########
-            logger.info("getting available regions...")
+            logger.debug("wait untill iFrame located...")
+            self.waiter.until(ec.visibility_of_element_located((By.ID, "iFrameResizer0")))
+            self.iframe = self.driver.find_element('id', "iFrameResizer0")
+            logger.debug("done. waiting 3 seconds before releasing lock...")
             time.sleep(delay)
-            available_regions = []
-            logger.debug("finding region selection box......")
-            region_selection_box = self.driver.find_element('id', 'awsui-select-1-textbox')
-            logger.debug("found region selection box")
-            time.sleep(delay)
-            region_selection_box.click()
-            logger.debug("clicked region selection box")
-            time.sleep(delay)
-            for elem in self.driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
-                available_regions.append(elem.text)
-            logger.debug("got regions, collapsing menu...")
-            time.sleep(delay)
-            region_selection_box.click()
-        finally:
-            self.driver.switch_to.default_content()
-        logger.debug("found {} operating systems and {} regions".format(len(available_operating_systems), len(available_regions)))
-        return (available_operating_systems, available_regions)
-    
+        except Exception as e:  # pragma: no cover
+            logger.critical("While initializing worker '{}', an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, e), exc_info=True)
+            self.driver.close()
+            raise ScrprCritical("While initializing worker '{}', an exception occurred which requires closing the Selenium WebDriver: {}")
+            # @@@ how to graceful
 
     def get_available_operating_systems(self) -> List[str]:
         """
@@ -396,15 +348,16 @@ class EC2DataCollector(DataCollector):
             os_selection_box.click()
             self.wait_for_menus_to_close()
             self.driver.switch_to.default_content()
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             self.driver.close()
             logger.error(e)
             raise e
         return available_operating_systems
 
-    def select_operating_system(self, _os: str):
+    def select_operating_system(self, _os: str) -> str:
         """
         Select an operating system for filtering data
+        Returns the operating system name if successful, tries to return None otherwise.
         NOTE: contains try/catch for self.driver
         NOTE: switches to iframe
         """
@@ -429,9 +382,9 @@ class EC2DataCollector(DataCollector):
                     self.wait_for_menus_to_close()
                     self.driver.switch_to.default_content()
                     logger.debug("{} Selected operating system '{}'".format(self._id, _os))
-                    return
+                    return _os
             self.driver.switch_to.default_content()
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             self.driver.close()
             logger.error(e)
             raise e
@@ -454,7 +407,7 @@ class EC2DataCollector(DataCollector):
             region_selection_box.click()
             self.wait_for_menus_to_close()
             self.driver.switch_to.default_content()
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             logger.error(e)
             self.driver.close()
             raise e
@@ -476,7 +429,6 @@ class EC2DataCollector(DataCollector):
             location_type_select_box = self.driver.find_element(By.ID, 'awsui-select-0')
             location_type_select_box.click()
             time.sleep(delay)
-            # self.wait_for_menus_to_close()
 
             # what you have to click firt in order to show the dropdown
             filter_selection = 'AWS Region'
@@ -504,9 +456,9 @@ class EC2DataCollector(DataCollector):
                     self.driver.switch_to.default_content()
                     logger.debug("{} Selected region '{}'".format(self._id, region))
                     time.sleep(delay)
-                    return True
+                    return region
             self.driver.switch_to.default_content()
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             self.driver.close()
             logger.error(e)
             raise e
@@ -519,12 +471,20 @@ class EC2DataCollector(DataCollector):
         NOTE: contains try/catch for self.driver
         NOTE: switches to iframe
 
-        Fails for small browser sizes
+        NOTE: Fails for small browser sizes
+
+        _os: Operating System name offered by AWS
+        region: AWS region name
+
+        raises: ScrprCritical
         """
         delay = 0.5
         logger.debug(f"{self._id} scrape all: {region=} {_os=}")
         time.sleep(delay)
 
+        ########################
+        # set table filters appropriately
+        ########################
         try:
             logger.debug("{} selecting operating system...".format(self._id))
             time.sleep(delay)
@@ -536,11 +496,10 @@ class EC2DataCollector(DataCollector):
             self.select_region(region)
             logger.debug("{} region selected, scraping...".format(self._id))
             time.sleep(delay)
-        except ScrprException:
-            # if a region or an operating system can not be found, release the
-            # lock to allow driver to be reused.
+        except ScrprException:  # pragma: no cover
             logger.error("{} failed to select an operating system '{}' for region {}, this data will not be recorded if it exists!".format(self._id, _os, region), exc_info=True)
             return None
+
         try:
             self.driver.switch_to.frame(self.iframe)
             rtn: List[PGInstance] = []
@@ -548,9 +507,10 @@ class EC2DataCollector(DataCollector):
             logger.debug("{} resetting view port position...".format(self._id))
             self.scroll(-10000)
 
-            logger.debug("{} scrolling table into view...".format(self._id))
             table = self.driver.find_element(By.XPATH, '//awsui-table[@data-test="pricing_table"]')
             header = table.find_element(By.CLASS_NAME, 'awsui-table-sticky-active')  # the row you can click to sort the table
+
+            logger.debug("{} scrolling table into view...".format(self._id))
             self.scroll(header.location['y'])
             self.scroll(header.size['height'] * 4)
             time.sleep(delay)
@@ -562,7 +522,6 @@ class EC2DataCollector(DataCollector):
             pages[1].click()  # make sure we're starting on page 1
             arrow_button = pages[-1].find_element(By.TAG_NAME, 'button')  # >
             num_pages = pages[-2].find_element(By.TAG_NAME, 'button').text  # last page number
-
 
             #################
             # scrape
@@ -580,32 +539,28 @@ class EC2DataCollector(DataCollector):
                 logger.debug("{} num rows: {}".format(self._id, len(tr_tags)))
                 for tr in tr_tags:
                     instance_props = []
+                    # instance_props = {self.human_date, region, _os}
+
                     # columns in row
                     for td in tr.find_elements(By.TAG_NAME, "td"):
                         # 0 t3a.xlarge # 1 $0.1699 # 2 4 # 3 16 GiB # 4 EBS Only # 5 Up to 5 Gigabit
                         instance_props.append(td.text)
+                        # instance_props.add(td.text)
                     rtn.append(PGInstance(self.human_date, region, _os, *instance_props))
-                # @@
                 time.sleep(0.1)
             logger.debug("{} resetting viewport before returning...".format(self._id))
             self.scroll(-10000)
             self.driver.switch_to.default_content()
             return rtn
-            
-        except Exception as e:
-            logger.critical("worker {}: While scraping os '{}' for region '{}'. an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, _os, region, e), exc_info=True)
-            self.driver.close()
-            logger.debug("(from exception in worker {}) releasing lock...".format(self._id))
-            try:
-                self.lock.release()
-            except RuntimeError:
-                # if self.scrape() wasn't called in a thread there will be no lock to release
-                pass
-            return None
 
-    def store_postgres(self, instances: List[PGInstance]) -> Tuple[int, int]:
+        except Exception as e:  # pragma: no cover
+            logger.critical("worker {}: While scraping os '{}' for region '{}'. an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, _os, region, e), exc_info=True)
+            raise ScrprCritical("worker {}: While scraping os '{}' for region '{}'. an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, _os, region, e))
+
+    def store_postgres(self, instances: List[PGInstance], table='ec2_instance_pricing') -> Tuple[int, int]:
         """
         returns (written_count, error_count)
+        make instances subclass Storable.Postres and move to DataCollector
         """
         error_count = 0
         already_existed_count = 0
@@ -613,47 +568,67 @@ class EC2DataCollector(DataCollector):
         with self.get_db() as conn:
             for instance in instances:
                 try:
-                    instance.store(conn)
-                    stored_count += 1
-                except UniqueViolation:
-                    already_existed_count += 1
-                    error_count += 1
-                    conn.commit()
-                except Exception as e:
+                    stored_new_data = instance.store(conn, table=table)
+                    if stored_new_data:
+                        stored_count += 1
+                    else:
+                        already_existed_count += 1
+                        error_count += 1
+                except Exception as e:  # pragma: no cover
                     logger.error("An unhandled exception occured while attempting to write data to database: {}".format(e))
                     error_count += 1
                     conn.commit()
-        if already_existed_count > 0:
+        # squash a bunch of warnings into one
+        if already_existed_count:
             logger.warning("{} records already existed in database and were not stored".format(already_existed_count))
         return (stored_count, error_count)
 
-    def store_csv(self, instances: List[Instance]) -> Tuple[int, int]:
+    def save_csv(self, region, _os, instances: List[Instance]) -> Tuple[int, int]:
         """
-        not sure I like the way this function works
+        Save a single csv file named 'region.csv' under the directory
+
+        `<csv_data_dir>/ec2/<date>/<operating_system>/<region>.csv`
+
+        for a directory tree like:
+        ```text
+        ~/.local/share/scrpr/csv-data/ec2/
+        ├── 2023-02-16
+        │   ├── Linux
+        │   │   ├── ap-southeast-4.csv
+        │   │   ├── eu-west-2.csv
+        │   │   :
+        │   │   └── us-east-1.csv
+        │   ├── Windows
+        │   ...
+        │
+        └── 2023-02-17
+            ├── Linux
+            ├── Windows
+            ...
+        ```
+
+        ---
+
+        ### output format
+
+        | date | instance_type | operating_system | region | cost_per_hr | cpu_ct | ram_size_gb | storage_type | network_throughput |
+        | :---: | :----------: | :--------------: | :----: | :---------: | :----: | :---------: | :----------: | :----------------: |
+        | 2023-02-17 | t4g.nano | Linux | ca-central-1 | $0.0046 | 2 | 0.5 GiB | EBS Only | Up to 5 Gigabit |
+        | 2023-02-17 | t4g.micro | Linux | ca-central-1 | $0.0092 | 2 | 1 GiB | EBS Only | Up to 5 Gigabit |
+
+        * `end of markdown experiment`
+
         """
+
         stored_count = 0
-        error_count = 0
-        # all to avoid requiring 'region' as a parameter. let's see if this
-        # pays of...
-        _regions = []
-        for i in instances:
-            _regions.append(i.region)
-        if len(_regions) > 1:
-            logger.critical("BUG: more than 1 region in csv dataset: Marking as bad!")
-            d = Path(f"{self.csv_data_dir}-bad/{self.human_date}/{_os}")
-            d.mkdir(exist_ok=True, parents=True)
-            f = d / f"{'_'.join(_regions)}.csv"
-            error_count = len(instances)
-        else:
-            d = Path(f"{self.csv_data_dir}/{self.human_date}/{_os}")
-            d.mkdir(exist_ok=True, parents=True)
-            # @@ feels dirty...
-            f = d / f"{_regions[0]}.csv"
+        csv_data_tree = Path(f"{self.csv_data_dir}") / self.data_type_scraped / self.human_date
+        d = csv_data_tree / _os
+        d.mkdir(exist_ok=True, parents=True)
+        f = d / f"{region}.csv"
 
         logger.info("{} storing data to csv file {}".format(self._id, f.relative_to(self.csv_data_dir)))
 
         if f.exists():
-            # @@@ what do if compressed data exists.??
             logger.warning("Overwriting existing data at '{}'".format(f.absolute()))
             # I think the hassle of rotating the file around to ensure a
             # backup is produced is too much headache later on.
@@ -666,10 +641,12 @@ class EC2DataCollector(DataCollector):
                 for inst in instances:
                     writer.writerow(inst.as_dict())
                     stored_count += 1
-        except Exception as e:
-            raise ScrprException("failed to save csv data fo file '{}': {}".format(f.absolute(), e))
+        except Exception as e:  # pragma: no cover
+            logger.error("Error saving data: {}".format(e), exc_info=True)
+            return 0, len(instances)
         logger.debug("saved data to file: '{}'".format(f))
-        return (stored_count, error_count)
+
+        return stored_count, 0
 
     def scrape_and_store(self, _os: str, region: str) -> bool:
         """
@@ -680,10 +657,10 @@ class EC2DataCollector(DataCollector):
         """
 
         logger.debug(f"{self._id} scrape and store: {region=} {_os=}")
-        ################# # @Scrape #################
+        ################# # Scrape #################
         try:
             instances: List[PGInstance] = self.collect_ec2_data(_os=_os, region=region)
-        except ScrprException:
+        except ScrprException:  # pragma: no cover
             logger.error("failed to acquire data")
             self.lock.release()
             return False
@@ -698,20 +675,18 @@ class EC2DataCollector(DataCollector):
 
             ################# # CSV #################
             if self.csv_data_dir is not None:
-                try:
-                    self.store_csv(instances)
-                except ScrprException as e:
-                    logger.error("failed to save to database")
+                stored_count, error_count = self.save_csv(region, _os, instances)
+                logger.info("{} saved {}/{} csv rows with {} errors.".format(self._id, stored_count, len(instances), error_count))
             else:
                 logger.info("{} skip saving to csv file".format(self._id))
 
             self.lock.release()
             return True
 
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             logger.critical("worker {}: While storing data for os '{}' for region '{}', an exception occurred which may result in dataloss: {}".format(self._id, _os, region, e), exc_info=True)
             self.lock.release()
-            return False
+            raise ScrprException("worker {}: While storing data for os '{}' for region '{}', an exception occurred which may result in dataloss: {}".format(self._id, _os, region, e))
 
     def get_result_count_test(self) -> int:
         """
@@ -725,7 +700,7 @@ class EC2DataCollector(DataCollector):
             t = self.driver.find_element(By.CLASS_NAME, 'awsui-table-header').find_element(By.TAG_NAME, "h2").text
             # ¯\_(ツ)_/¯
             self.driver.switch_to.default_content()
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             self.driver.close()
             logger.error("{} error getting number of results: {}".format(self._id, e), exc_info=True)
             raise e
@@ -749,16 +724,17 @@ class EC2DataCollector(DataCollector):
             self.waiter.until(ec.visibility_of_element_located((By.ID, "awsui-input-1")))
             # instance search paginator
             self.waiter.until(ec.visibility_of_element_located((By.TAG_NAME, "awsui-table-pagination")))
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             self.driver.close()
             logger.error("{} Error waiting for menus to close: {}".format(self._id, e), exc_info=True)
             raise e
-    
+
     @contextmanager
     def get_db(self):
         """
         Uses DataCollectorConfig.db (db_config) to yield a connection to a Postgres database
         """
+        logger.info("connecting to database with config: {}".format(self.db_config))
         conn = psycopg2.connect(
             self.db_config.get_dsl()
         )
@@ -769,19 +745,21 @@ class EC2DataCollector(DataCollector):
         conn.close()
 
 
-def compress_data(data_dir: str, human_date: str):
+def compress_data(csv_data_dir: str, data_type_scraped: str, human_date: str, rm_tree=True):
     """Save data to a zip archive immediately under data_dir instead of saving directory tree"""
     errors = False
-    csv_data_tree = Path(data_dir) / human_date  # e.g. csv-data/ec2/2023-01-29
+    csv_data_tree = Path(f"{csv_data_dir}") / data_type_scraped / human_date
+    assert csv_data_tree.exists()
     logger.debug("compressing data in '{}'".format(csv_data_tree.absolute()))
-    old_cwd = os.getcwd()
-    os.chdir(data_dir)
+    old_cwd = os.getcwd()  # @@@ jank ???
+    os.chdir(Path(csv_data_dir) / data_type_scraped)
     bkup_zip_file = Path(f"{human_date}.bkup-{uuid1()}.zip")
     if Path(f"{human_date}.zip").exists():
         logger.warning("Removing existing zip file '{}.zip'".format(human_date))
-
         Path(f"{human_date}.zip").rename(bkup_zip_file.name)
-    with zipfile.ZipFile(f"{human_date}.zip", 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+
+    with zipfile.ZipFile(f"{human_date}.zip", 'a', compression=zipfile.ZIP_DEFLATED) as zf:
+
         for os_name_dir in Path(human_date).iterdir():
             if os_name_dir.is_dir():
                 _csv_ct = 0
@@ -790,7 +768,7 @@ def compress_data(data_dir: str, human_date: str):
                     try:
                         logger.debug("adding {}/{}/{}".format(human_date, os_name_dir.name, csv_file.name))
                         zf.write(f"{human_date}/{os_name_dir.name}/{csv_file.name}")
-                    except Exception as e:
+                    except Exception as e:  # pragma: no cover
                         errors = True
                         logger.error("Error writing compressed data: {}".format(e), exc_info=True)
             logger.debug("Compressed {} files of {} os data".format(_csv_ct, os_name_dir.name))
@@ -798,17 +776,20 @@ def compress_data(data_dir: str, human_date: str):
         if bkup_zip_file.exists():
             logger.debug("removing temporary backup '{}'".format(bkup_zip_file.absolute()))
             bkup_zip_file.unlink()
-        logger.debug("Removing uncompressed data in '{}'".format(csv_data_tree.absolute()))
-        shutil.rmtree(csv_data_tree)
+        if rm_tree:
+            logger.debug("Removing uncompressed data in '{}'".format(csv_data_tree.absolute()))
+            shutil.rmtree(csv_data_tree)
     os.chdir(old_cwd)
     return
 
-def do_args():
-    default_data_dir = os.path.join(os.path.expanduser('~') , '.local' , 'share' , 'scrpr' , 'csv-data', 'ec2')
-    default_log_dir = os.path.join(os.path.expanduser('~') , '.local' , 'share' , 'scrpr' , 'logs')
-    default_args = {  # fyi
+
+def do_args(sys_args):
+    """
+    fyi:
+    ```json
+    default_args = {
         "follow": False,
-        "log_file": "/home/scrpr/.local/share/scrpr/logs/scrpr.log",
+        "log_file": "<XDG_SHARE_DIR>/scrpr/logs/scrpr.log"
         "thread_count": 24,
         "overdrive_madness": False,
         "no_compress": False,
@@ -816,12 +797,13 @@ def do_args():
         "operating_systems": None,
         "get_operating_systems": False,
         "get_regions": False,
-        "data_dir": "/home/scrpr/.local/share/scrpr/csv-data/ec2",
-        "metric_data_file": "/home/scrpr/.local/share/scrpr/logs/metric-data.txt",
+        "data_dir": "<XDG_SHARE_DIR>/scrpr/csv-data",
         "store_csv": True,
         "store_db": True,
         "v": 0
     }
+    ```
+    """
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--follow",
@@ -830,7 +812,7 @@ def do_args():
         help="print logs to stdout in addition to the log file")
     parser.add_argument("--log-file",
         required=False,
-        default=os.path.join(default_log_dir, 'scrpr.log'),
+        default=os.path.join(SCRPR_HOME, "logs", 'scrpr.log'),
         help="log output destination file. '--log-file=console' will instead print to your system's stderr stream.")
     parser.add_argument("-t", "--thread-count",
         default=cpu_count(),
@@ -840,9 +822,10 @@ def do_args():
     parser.add_argument("--overdrive-madness",
         action='store_true',
         help=f"allow going over the recommended number of threads (number of threads for your machine, {cpu_count()})")
-    parser.add_argument("--no-compress",
+    parser.add_argument("--compress",
         required=False,
-        action='store_true',
+        action=BooleanOptionalAction,
+        default=True,
         help="script outputs a directory tree of csv data instead of the <os_name>_<date>.zip archive")
     parser.add_argument("--regions",
         type=str,
@@ -866,12 +849,8 @@ def do_args():
         help="print a list of the available regions and exit")
     parser.add_argument("-d", "--csv-data-dir",
         required=False,
-        default=default_data_dir,
+        default=os.path.join(SCRPR_HOME, 'csv-data'),
         help="base directory for output directory tree or zip file")
-    parser.add_argument("--metric-data-file",
-        required=False,
-        default=os.path.join(default_log_dir, 'metric-data.txt'),
-        help="base directory for output directory tree")
     parser.add_argument("--store-csv",
         required=False,
         action=BooleanOptionalAction,
@@ -889,63 +868,180 @@ def do_args():
         default=0,
         help='increase logging output')
 
-    return parser.parse_args()
+    args = parser.parse_args(sys_args)
+
+    # return MainConfig(args)
+    return args
 
 
-def get_table_size(db_config: DatabaseConfig, table='ec2_instance_pricing'):
+def get_data_dir_size(data_dir: str | Path):
+    """
+    equivalent to du -bs data_dir/* (does not include size of data_dir)
+    """
+    if not Path(data_dir).exists():
+        logger.error("no such directory: {}".format(Path(data_dir).absolute()))
+        return None
+    if not Path(data_dir).is_dir():
+        logger.error("{} is not a directory.".format(Path(data_dir).absolute()))
+        return None
+
+    s = 0
+    for base in os.walk(data_dir):
+        # add files' sizes
+        for d2 in base[2]:
+            # print(Path(os.path.join(base[0], d2)).absolute(), Path(os.path.join(base[0], d2)).stat().st_size)
+            s += Path(os.path.join(base[0], d2)).stat().st_size
+        # traverse subdirectories
+        if base[1]:
+            for d1 in base[1]:
+                # print(Path(os.path.join(base[0], d1)).absolute(), Path(os.path.join(base[0], d1)).stat().st_size)
+                s += Path(os.path.join(base[0], d1)).stat().st_size
+                # s += Path(os.path.join(base[0], d1)).stat().st_blksize
+                s += get_data_dir_size(os.path.join(base[0], d1))
+        # nothing left to do
+        else:
+            return s
+        return s
+    return s
+
+
+def get_table_size(db_config: DatabaseConfig, table='ec2_instance_pricing') -> int:
+    if db_config is None:
+        logger.warning("Invalid database configuration while attempting to get size of table '{}', skipping.".format(table))
+        return -1
     # SELECT pg_size_pretty(pg_total_relation_size('public.ec2_instance_pricing'));  # kB, mB
-    s = sql.SQL("SELECT pg_total_relation_size('public.{}')".format(table))
-    conn = psycopg2.connect(db_config.get_dsl())
-    curr = conn.cursor()
-    curr.execute(s)
-    r = curr.fetchone()[0]
-    conn.close()
-    logger.debug("'{}' table is {:.2f} Mb ({} bytes)".format(
-        table, r / 1024 / 1024, r 
-    ))
-    return r
+    try:
+        s = sql.SQL("SELECT pg_total_relation_size('public.{}')".format(table))
+        conn = psycopg2.connect(db_config.get_dsl())
+        curr = conn.cursor()
+        curr.execute(s)
+        r = curr.fetchone()[0]
+        conn.close()
+        logger.debug("'{}' table is {:.2f} Mb ({} bytes)".format(
+            table, r / 1024 / 1024, r
+        ))
+        return r
+    except Exception as e:
+        logger.error("Could not retrieve size of table '{}': {}".format(table, e))
+        return -2
 
 
-if __name__ == '__main__':
-    t_main = time.time()
-    URL = "https://aws.amazon.com/ec2/pricing/on-demand/"
-    human_date: str = datetime.fromtimestamp(floor(time.time())).strftime("%Y-%m-%d")
+@dataclass
+class MetricData:
+    date: str
+    threads: int = 0
+    oses: int = None
+    regions: int = None
+    t_init: float = -1
+    t_run: float = -1
+    s_csv: float = 0
+    s_db: float = 0
+    reported_errors: int = None
+    command_line: str = None
 
-    args = do_args()
+    def as_dict(self):
+        return OrderedDict({
+            "date": self.date,
+            "threads": self.threads,
+            "oses": self.oses,
+            "regions": self.regions,
+            "t_init": self.t_init,
+            "t_run": self.t_run,
+            "s_csv": self.s_csv,
+            "s_db": self.s_db,
+            "reported_errors": self.reported_errors,
+            "command_line": sys.argv[1:],
+        })
 
-    ##########################################################################
-    # logging
-    ##########################################################################
+    def store(self, db_config: DatabaseConfig):
+        if db_config is None:
+            logger.warn("not storing data")
+            return
+        conn = psycopg2.connect(db_config.get_dsl())
+        curr = conn.cursor()
+        curr.execute("""\
+            INSERT INTO metric_data (date, threads, oses, regions, t_init, t_run, s_csv, s_db, reported_errors, command_line)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (self.date, self.threads, self.oses, self.regions, self.t_init, self.t_run, self.s_csv, self.s_db, self.reported_errors, self.command_line)
+        )
+        conn.commit()
+        conn.close()
+
+
+@dataclass
+class MainConfig:
+    """type hints"""
+    follow: bool
+    log_file: str
+    thread_count: int
+    overdrive_madness: bool
+    compress: bool
+    regions: List[str]
+    operating_systems: List[str]
+    get_operating_systems: bool
+    get_regions: bool
+    csv_data_dir: str
+    store_csv: bool
+    store_db: bool
+    v: int
+
+    def load(self):
+        raise NotImplementedError
+
+    def __repr__(self):
+        return f"""\
+            {__file__} {self.__dict__}
+        """
+
+
+def init_logging(verbosity: int, follow: bool, log_file: str | Path):
     logger = logging.getLogger()
     logging.getLogger('selenium.*').setLevel(logging.WARNING)
     logging.getLogger('selenium.webdriver.remote.remote_connection').setLevel(logging.WARNING)
     logging.getLogger('urllib3').setLevel(logging.WARNING)
-    if args.v == 0:
+    if verbosity == 0:
         logger.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(message)s')
     else:
         logger.setLevel(logging.DEBUG)
         formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(name)s : %(threadName)s (%(thread)s) : %(funcName)s : %(message)s')
-    if args.follow:
+    if follow:
         sh = logging.StreamHandler()
         sh.setFormatter(formatter)
         logger.addHandler(sh)
-    fh = logging.FileHandler(str(args.log_file))
-    fh = RotatingFileHandler(str(args.log_file),
+    fh = RotatingFileHandler(
+        str(log_file),
         maxBytes=5_000_000,  # 5MB
         backupCount=5
     )
     fh.setFormatter(formatter)
     logger.addHandler(fh)
 
+    return logger
+
+
+def main(args: MainConfig):  # noqa: C901
+    t_main = time.time()
+    human_date: str = datetime.fromtimestamp(floor(time.time())).strftime("%Y-%m-%d")
+
+    metric_data = MetricData(human_date)
+    metric_data.command_line = str(args.__dict__)
+
+    ##########################################################################
+    # logging
+    ##########################################################################
+    logger = init_logging(
+        verbosity=args.v,
+        follow=args.follow,
+        log_file=args.log_file
+    )
+
     logger.warning("This program is still under development, log output may be ... less than scrupulous.")
     logger.info("Starting program with PID {}".format(os.getpid()))
 
-    if not Path(args.csv_data_dir).exists():
-        logger.error(f"no such directory '{args.csv_data_dir}'")
-        exit(1)
-
     if args.store_db:
+        metric_data.s_db = -1
         db_config = DatabaseConfig()
         db_config.load()
         conn = psycopg2.connect(db_config.get_dsl())
@@ -954,14 +1050,9 @@ if __name__ == '__main__':
     else:
         db_config = None
 
-    if args.store_csv:
-        csv_config = args.csv_data_dir
-    else:
-        csv_config = None
-
     config = DataCollectorConfig(
         human_date=human_date,
-        csv_data_dir=csv_config,
+        csv_data_dir=args.csv_data_dir,
         db_config=db_config,
     )
 
@@ -971,24 +1062,28 @@ if __name__ == '__main__':
         logger.debug("{}={}".format(k, v))
     logger.debug("{}".format(str(db_config)))
 
-    s_start = get_table_size(db_config)
+    if args.store_db:
+        s_db_start = get_table_size(db_config)
+    if args.store_csv:
+        s_csv_start = get_data_dir_size(config.csv_data_dir)
 
     ##########################################################################
     # regions and operating systems
     ##########################################################################
-    # get list of operating_system-region pair tuples
     os_region_collector = EC2DataCollector('os_region_collector', config=config)
-    tgt_oses, tgt_regions = os_region_collector.get_available_regions_and_os()
-    os_region_collector.driver.close()
-    logger.debug("tgt_oses    = {}".format(tgt_oses))
-    logger.debug("tgt_regions = {}".format(tgt_regions))
-
+    tgt_oses = os_region_collector.get_available_operating_systems()
+    tgt_regions = os_region_collector.get_available_regions()
     if args.get_operating_systems:
+        logger.debug("tgt_oses = {}".format(tgt_oses))
         print("Available Operating Systems:")
-        for _os in tgt_oses: print(f"\t'{_os}'")
+        for _os in tgt_oses:
+            print(f"\t'{_os}'")
     if args.get_regions:
+        logger.debug("tgt_regions = {}".format(tgt_regions))
         print("Available Regions:")
-        for r in tgt_regions: print(f"\t{r}")
+        for r in tgt_regions:
+            print(f"\t{r}")
+    os_region_collector.driver.close()
     if args.get_operating_systems or args.get_regions:
         exit(0)
 
@@ -1005,6 +1100,7 @@ if __name__ == '__main__':
                 print(f"supplied region '{r}' not in list")
                 exit(1)
         tgt_regions = args.regions.split(',')
+    metric_data.regions = len(tgt_regions)
 
     if args.operating_systems is not None:
         logger.debug("Validating provided operating systems...")
@@ -1016,6 +1112,7 @@ if __name__ == '__main__':
                 print(f"supplied operating system '{o}' not in list")
                 exit(1)
         tgt_oses = args.operating_systems.split(',')
+    metric_data.oses = len(tgt_oses)
 
     num_threads = cpu_count()
     if args.thread_count < 1:
@@ -1025,55 +1122,51 @@ if __name__ == '__main__':
         num_threads = cpu_count()
     else:
         num_threads = args.thread_count
+    metric_data.threads = num_threads
 
     thread_tgts = []
     for o in tgt_oses:
         for r in tgt_regions:
             thread_tgts.append((o, r))
     logger.debug("thread targets ({}) = {}".format(len(thread_tgts), thread_tgts))
+
+    metric_data.t_init = 0
     thread_thing = ThreadDivvier(config=config, thread_count=num_threads)
     t_prog_init = time.time() - t_main
+    metric_data.t_init = t_prog_init
     logger.info("Initialized in {}".format(seconds_to_timer(time.time() - t_main)))
+
     # blocks until all threads have finished running, and thread_tgts is exhausted
     thread_thing.run_threads(thread_tgts)
 
     ##########################################################################
     # after data has been collected
     ##########################################################################
-    # @@@
-    if (not args.no_compress) and (args.store_csv):
-        compress_data(data_dir=args.csv_data_dir, human_date=human_date)
-        s_csv = Path(f"{args.csv_data_dir}/{human_date}.zip").stat().st_size
-    else:
-        if Path(f"{args.csv_data_dir}/{human_date}").exists():
-            s_csv = 0
-            for _os in Path(f"{args.csv_data_dir}/{human_date}").iterdir():
-                if not _os.is_dir():
-                    continue
-                for csvf in _os.iterdir():
-                    s_csv += csvf.stat().st_size
+    if args.compress:
+        compress_data(config.csv_data_dir, 'ec2', human_date, rm_tree=True)
+        # ERRORS.append("compression not implemented.")
+
+    if args.store_csv:
+        metric_data.s_csv = get_data_dir_size(config.csv_data_dir) - s_csv_start
+
     if args.store_db:
-        s_db = get_table_size(db_config) - s_start
+        s_db = get_table_size(db_config) - s_db_start
+        metric_data.s_db = s_db
 
     t_prog_tot = time.time() - t_main
-    metric_data = {
-        "date": human_date,
-        "threads": num_threads,
-        "oses": len(tgt_oses),
-        "regions": len(tgt_regions),
-        "t_init": f"{t_prog_init:.2f}",
-        "t_run": f"{t_prog_tot:.2f}",
-        "s_csv_run": f"{s_csv / 1024 / 1024:.3f}",
-        "s_db_run": f"{s_db / 1024 / 1024:.3f}",
-        "reported_errors": len(ERRORS),
-    }
+    metric_data.t_run = t_prog_tot
+    metric_data.reported_errors = len(ERRORS)
+
     logger.debug("run metrics:")
-    for k, v in metric_data.items():
+    for k, v in metric_data.as_dict().items():
         logger.debug(f"{k}: {v}")
+    logger.debug("db total size:\t{:.2f}M".format(get_table_size(db_config) / 1024 / 1024))
+    logger.debug("csv total size:\t{:.2f}M".format(get_data_dir_size(config.csv_data_dir) / 1024 / 1024))
     logging.debug("Saving run's metric data to '{}'".format(args.metric_data_file))
-    with open(args.metric_data_file, 'a') as md:
-        writer = csv.DictWriter(md, fieldnames=list(metric_data.keys()), delimiter='\t').writerow(metric_data)
+    with open(os.path.join(SCRPR_HOME, "metric-data.csv"), 'a') as md:
+        csv.DictWriter(md, fieldnames=list(metric_data.as_dict().keys()), delimiter='\t').writerow(metric_data.as_dict())
         # md.write(f"{num_threads}\t{len(tgt_oses)}\t{len(tgt_regions)}\t{t_prog_init:.2f}\t{t_prog_tot:.2f}\t{(t_size / 1024 / 1024):.3f}M\n")
+    metric_data.store(db_config)
     logger.info("Program finished in {}".format(seconds_to_timer(time.time() - t_main)))
     logger.info('---------------------------------------------------')
     logger.info("errors ({}):".format(len(ERRORS)))
@@ -1081,6 +1174,8 @@ if __name__ == '__main__':
         logger.error(e)
     logger.info('---------------------------------------------------')
 
-    ##########################################################################
-    # +3 SLOC
-    ##########################################################################
+
+if __name__ == '__main__':
+    import sys
+    args = MainConfig(**do_args(sys.argv[1:]).__dict__)
+    raise SystemExit(main(args))

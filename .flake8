@@ -1,4 +1,11 @@
 [flake8]
-ignore = E501,E128
-filename = ./scrpr.py
+ignore = E501,E128,E266
+filename = 
+  ./scrpr.py
+  ./ec2/instance.py
+  ./tests/test_*.py
+  ./tests/*_test.py
 max-complexity = 10
+per-file-ignores =
+  tests/*_test.py:E121,E123,E126
+  tests/test_*.py:E121,E123,E126
