@@ -3,16 +3,10 @@ on:
     branches:
       - 'master'
 env:
-  PROG_NAME: main.py
+  PROG_NAME: scrpr.py
 
 jobs:
   do-tests:
-#    container:
-#      image: postgres:14
-#      env:
-#        POSTGRES_PASSWORD: ${{ secrets.postgres_password }}
-#      ports:
-#        - 5432
     runs-on: "ubuntu-latest"
     environment: test
     steps:
@@ -22,18 +16,17 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
+
     - name: pip install
       run: pip install -r requirements-test.txt
 
-    - name: run tests
-      run: |
-        flake8
-        #pytest -s -v tests/
-        
+    - name: check bellybutton
+      run: flake8
+
     - name: uhh
       run: docker run -d -p5432:5432 -e POSTGRES_PASSWORD=${{ secrets.postgres_password }} postgres:14
 
-    - name: uhh
+    - name: uhhh
       run: |
         sudo apt install -y postgresql-client-14
         cat <<EOF | PGPASSWORD=${{ secrets.postgres_password }} psql -h localhost -Upostgres 
@@ -44,5 +37,13 @@ jobs:
         EOF
 
         PGPASSWORD=${{ secrets.scrpr_test_password }} psql -h localhost -Uscrpr_test -c 'SELECT 1;'
+
+    - name: run tests
+      run: |
+        pytest -s -v tests/
+
+    - name: make sure we can get help
+      run: python3 -m scrpr -h || /bin/true
+        
 
 
