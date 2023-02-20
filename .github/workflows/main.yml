@@ -7,6 +7,7 @@ env:
 
 jobs:
   setup_postgres_container:
+    runs_on: "ubuntu-latest"
     container:
       image: postgres:14
       env:
