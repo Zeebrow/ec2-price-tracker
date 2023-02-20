@@ -35,7 +35,6 @@ jobs:
           CREATE DATABASE scrpr_test WITH OWNER scrpr_test;
           GRANT ALL ON DATABASE scrpr_test TO scrpr_test;
         EOF
-
         PGPASSWORD=${{ secrets.scrpr_test_password }} psql -h localhost -Uscrpr_test -c 'SELECT 1;'
 
     - name: setup commection parameters
@@ -49,7 +48,7 @@ jobs:
         EOF
 
     - name: run tests
-        pytest -s -v tests/
+      run: pytest -s -v tests/
 
     - name: make sure we can get help
       run: python3 -m scrpr -h || /bin/true
