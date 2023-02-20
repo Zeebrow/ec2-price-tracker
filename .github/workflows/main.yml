@@ -6,8 +6,7 @@ env:
   PROG_NAME: main.py
 
 jobs:
-  test_postgres:
-    runs-on: "ubuntu-latest"
+  setup_postgres_container:
     container:
       image: postgres:14
       env:
@@ -17,13 +16,15 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
+  setup_python:
+    runs-on: "ubuntu-latest"
+    steps:
+    - uses: actions/checkout@v2
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-        architecture: 'x64'
-        cache: pip 
-
     - name: pip install
       run: pip install -r requirements-test.txt
 
@@ -34,7 +35,15 @@ jobs:
         
     - name: uhh
       run: |
-        docker ps -a
+        sudo apt update -y && sudo apt upgrade -y
+        sudo apt install -y postgresql-client-14
+        cat <<EOF | PGPASSWORD=${{ secrets.postgres_password }} psql -h localhost -Upostgres 
+          CREATE ROLE scrpr_test LOGIN;
+          ALTER ROLE scrpr_test WITH PASSWORD '${{ secrets.scrpr_test_password }}';
+          CREATE DATABASE scrpr_test WITH OWNER scrpr_test;
+          GRANT ALL ON DATABASE scrpr_test TO scrpr_test;
+EOF
 
+        PGPASSWORD=${{ secrets.scrpr_test_password }} psql -h localhost -Uscrpr_test -c 'SELECT 1;'
 
 
