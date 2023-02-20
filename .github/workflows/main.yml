@@ -23,7 +23,7 @@ jobs:
     - name: check bellybutton
       run: flake8
 
-    - name: uhh
+    - name: start postgres:14 container
       run: docker run -d -p5432:5432 -e POSTGRES_PASSWORD=${{ secrets.postgres_password }} postgres:14
 
     - name: uhhh
@@ -40,6 +40,13 @@ jobs:
 
     - name: run tests
       run: |
+        cat <<EOF | sed 's/ //g' > .env-test
+          db_host=localhost
+          db_port=5432
+          db_user=scrpr_test
+          db_password=${{ secrets.scrpr_test_password }}
+          db_dbname=scrpr_test
+        EOF
         pytest -s -v tests/
 
     - name: make sure we can get help
