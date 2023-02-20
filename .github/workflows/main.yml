@@ -16,12 +16,12 @@ jobs:
         - 5432
 
   setup_python:
-    container:
-      image: postgres:14
-      env:
-        POSTGRES_PASSWORD: ${{ secrets.postgres_password }}
-      ports:
-        - 5432
+#    container:
+#      image: postgres:14
+#      env:
+#        POSTGRES_PASSWORD: ${{ secrets.postgres_password }}
+#      ports:
+#        - 5432
     runs-on: "ubuntu-latest"
     steps:
     - uses: actions/checkout@v2
@@ -39,6 +39,7 @@ jobs:
         #pytest -s -v tests/
         
     - name: uhh
+      uses: setup_postgres_container
       run: |
         sudo apt install -y postgresql-client-14
         cat <<EOF | PGPASSWORD=${{ secrets.postgres_password }} psql -h localhost -Upostgres 
