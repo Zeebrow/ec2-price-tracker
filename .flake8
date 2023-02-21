@@ -1,5 +1,5 @@
 [flake8]
-ignore = E501,E128,E266
+ignore = E501,E128,E266,F401
 filename = 
   ./scrpr.py
   ./ec2/instance.py

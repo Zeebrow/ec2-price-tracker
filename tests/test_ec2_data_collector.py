@@ -72,10 +72,10 @@ def test_select_operating_system(ec2_data_collector: scrpr.EC2DataCollector, ope
         # (1280, 1024),  # 5:4
     )
 )
-def test_get_regions(data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
-    data_collector_config.window_w = window_w
-    data_collector_config.window_h = window_h
-    dc = scrpr.EC2DataCollector('test_get_regions', data_collector_config)
+def test_get_regions(ec2_data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
+    ec2_data_collector_config.window_w = window_w
+    ec2_data_collector_config.window_h = window_h
+    dc = scrpr.EC2DataCollector('test_get_regions', ec2_data_collector_config)
     regions = dc.get_available_regions()
     assert regions is not None
     assert 'us-east-1' in regions
@@ -94,10 +94,10 @@ def test_get_regions(data_collector_config: scrpr.DataCollectorConfig, window_w,
         # (1280, 1024),  # 5:4
     )
 )
-def test_get_operating_systems(data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
-    data_collector_config.window_w = window_w
-    data_collector_config.window_h = window_h
-    dc = scrpr.EC2DataCollector('test_get_operating_systems', data_collector_config)
+def test_get_operating_systems(ec2_data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
+    ec2_data_collector_config.window_w = window_w
+    ec2_data_collector_config.window_h = window_h
+    dc = scrpr.EC2DataCollector('test_get_operating_systems', ec2_data_collector_config)
     oses = dc.get_available_operating_systems()
     assert oses is not None
     assert 'Linux' in oses
@@ -147,10 +147,10 @@ def test_scrape_and_store(ec2_data_collector: scrpr.EC2DataCollector):
         # (1280, 1024),  # 5:4
     )
 )
-def test_collect_ec2_data(data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
-    data_collector_config.window_w = window_w
-    data_collector_config.window_h = window_h
-    dc = scrpr.EC2DataCollector('test_collect_ec2_data', data_collector_config)
+def test_collect_ec2_data(ec2_data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
+    ec2_data_collector_config.window_w = window_w
+    ec2_data_collector_config.window_h = window_h
+    dc = scrpr.EC2DataCollector('test_collect_ec2_data', ec2_data_collector_config)
     try:
         instances = dc.collect_ec2_data(_os='Linux', region='ap-southeast-4')
     except Exception as e:
@@ -230,10 +230,10 @@ def test_save_csv(data_dir, ec2_driverless_dc: scrpr.EC2DataCollector, indexed_i
         (800, 600),    # 4:3
     )
 )
-def test_get_regions_failing(data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
-    data_collector_config.window_w = window_w
-    data_collector_config.window_h = window_h
-    dc = scrpr.EC2DataCollector('test_get_regions', data_collector_config)
+def test_get_regions_failing(ec2_data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
+    ec2_data_collector_config.window_w = window_w
+    ec2_data_collector_config.window_h = window_h
+    dc = scrpr.EC2DataCollector('test_get_regions', ec2_data_collector_config)
     regions = dc.get_available_regions()
     assert regions is not None
     assert 'us-east-1' in regions
@@ -246,10 +246,10 @@ def test_get_regions_failing(data_collector_config: scrpr.DataCollectorConfig, w
         (800, 600),    # 4:3
     )
 )
-def test_get_operating_systems_failing(data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
-    data_collector_config.window_w = window_w
-    data_collector_config.window_h = window_h
-    dc = scrpr.EC2DataCollector('test_get_operating_systems', data_collector_config)
+def test_get_operating_systems_failing(ec2_data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
+    ec2_data_collector_config.window_w = window_w
+    ec2_data_collector_config.window_h = window_h
+    dc = scrpr.EC2DataCollector('test_get_operating_systems', ec2_data_collector_config)
     oses = dc.get_available_operating_systems()
     assert oses is not None
     assert 'Linux' in oses
@@ -263,10 +263,10 @@ def test_get_operating_systems_failing(data_collector_config: scrpr.DataCollecto
         (800, 600),
     )
 )
-def test_collect_ec2_data_failing(data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
-    data_collector_config.window_w = window_w
-    data_collector_config.window_h = window_h
-    dc = scrpr.EC2DataCollector('test_collect_ec2_data', data_collector_config)
+def test_collect_ec2_data_failing(ec2_data_collector_config: scrpr.DataCollectorConfig, window_w, window_h):
+    ec2_data_collector_config.window_w = window_w
+    ec2_data_collector_config.window_h = window_h
+    dc = scrpr.EC2DataCollector('test_collect_ec2_data', ec2_data_collector_config)
     try:
         instances = dc.collect_ec2_data(_os='Linux', region='ap-southeast-4')
     except Exception as e:

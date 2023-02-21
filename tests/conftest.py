@@ -73,11 +73,11 @@ def db():
 
 
 @pytest.fixture
-def data_collector_config(pg_dbconfig):
+def ec2_data_collector_config(pg_dbconfig):
     data_dir = tempfile.mkdtemp()
     _, log_file = tempfile.mkstemp()
     # print(f"=====> {request.function.__name__} {log_file}")
-    yield scrpr.DataCollectorConfig(
+    yield scrpr.EC2DataCollectorConfig(
         human_date='1901-01-01',
         csv_data_dir=data_dir,
         db_config=pg_dbconfig,
@@ -90,8 +90,8 @@ def data_collector_config(pg_dbconfig):
 
 
 @pytest.fixture
-def ec2_data_collector(request, data_collector_config):
-    dc = scrpr.EC2DataCollector(request.function.__name__, config=data_collector_config)
+def ec2_data_collector(request, ec2_data_collector_config):
+    dc = scrpr.EC2DataCollector(request.function.__name__, config=ec2_data_collector_config)
     os.makedirs('screenshots', 0o0755, exist_ok=True)
 
     yield dc
@@ -154,8 +154,8 @@ def fake_pg_config():
 
 
 @pytest.fixture
-def ec2_driverless_dc(request, data_collector_config):
-    dc = scrpr.EC2DataCollector(request.function.__name__, config=data_collector_config, _test_driver="nodriver")
+def ec2_driverless_dc(request, ec2_data_collector_config):
+    dc = scrpr.EC2DataCollector(request.function.__name__, config=ec2_data_collector_config, _test_driver="nodriver")
     yield dc
 
 @pytest.fixture

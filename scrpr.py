@@ -36,6 +36,7 @@ from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.common import action_chains
 from selenium import webdriver
 import psycopg2
+from psycopg2.errors import UniqueViolation
 from psycopg2 import sql
 
 from ec2.instance import Instance, PGInstance
@@ -48,6 +49,10 @@ logger = logging.getLogger(__name__)
 ERRORS = []
 # XDG_DATA_HOME = os.path.join(os.path.expanduser('~'), '.local', 'share')
 SCRPR_HOME = os.path.join(os.path.expanduser('~'), '.local', 'share', 'scrpr')
+# this is overridable with the flag --csv-data-dir
+DEFAULT_CSV_DATA_DIR = os.path.join(SCRPR_HOME, "csv-data")
+DEFAULT_METRICS_DATA_FILE = os.path.join(SCRPR_HOME, "metric-data.txt")
+_THREAD_RUN_TIMES = []
 
 
 ###############################################################################
@@ -142,12 +147,16 @@ class DataCollectorConfig:
     window_h: height of browser resolution (still applies if headless=False)
     """
     human_date: str
-    db_config: DatabaseConfig = None
-    csv_data_dir: str = None
-    url: str = 'https://aws.amazon.com/ec2/pricing/on-demand/'
     headless: bool = True  # @@@ unsettable
     window_w: int = 1920  # @@@ unsettable
     window_h: int = 1080  # @@@ unsettable
+
+
+@dataclass
+class EC2DataCollectorConfig(DataCollectorConfig):
+    url: str = 'https://aws.amazon.com/ec2/pricing/on-demand/'
+    db_config: DatabaseConfig = None
+    csv_data_dir: str = None
 
 
 seconds_to_timer = lambda x: f"{floor(x/60)}m:{x%60:.1000f}s ({x} seconds)"  # noqa: E731
@@ -157,7 +166,7 @@ class ThreadDivvier:
     """
     Converts machine time processing data into developer time debugging exceptions.
     """
-    def __init__(self, config: DataCollectorConfig, thread_count=cpu_count()) -> None:
+    def __init__(self, thread_count) -> None:
         """
         Initialize one DataCollector for use in a thread, creating thread_count DataCollector instances with identical configuration.
         Each thread manages its own Selenium.WebDriver.
@@ -165,9 +174,6 @@ class ThreadDivvier:
         logger.debug("init ThreadDivvier with {} threads".format(thread_count))
         self.thread_count = thread_count
         self.drivers: List[DataCollector] = []
-        self.config = config
-        self.done = False
-        self.init_scrapers()
 
     def init_scraper(self, thread_id: int, config: DataCollectorConfig) -> None:
         try:
@@ -178,12 +184,12 @@ class ThreadDivvier:
         except ScrprCritical as e:
             logger.critical(e, exc_info=True)
 
-    def init_scrapers(self) -> None:
+    def init_scrapers_of(self, config: DataCollectorConfig) -> None:
         """
         Initialize scrapers one at a time.
         As scrapers become initialized, give them to the ThreadDivvier's drivers pool.
         """
-        next_id = 0
+        next_id = 0  # name shown in log messages
         # start init for each driver
         logger.info("initializing {} drivers".format(self.thread_count))
         for _ in range(self.thread_count):
@@ -191,7 +197,7 @@ class ThreadDivvier:
             t = threading.Thread(
                 name=next_id,
                 target=self.init_scraper,
-                args=(next_id, self.config),
+                args=(next_id, config),
                 daemon=False,
             )
             next_id += 1
@@ -259,10 +265,7 @@ class DataCollector:
         ###################################################
         # config
         ###################################################
-        self.url = config.url
         self.human_date = config.human_date
-        self.csv_data_dir = config.csv_data_dir
-        self.db_config = config.db_config
 
         if _test_driver is None:
             self.get_driver(
@@ -296,14 +299,18 @@ class EC2DataCollector(DataCollector):
     Instantiates a Selenium WebDriver for Chrome.
     """
     data_type_scraped = 'ec2'
+    url = 'https://aws.amazon.com/ec2/pricing/on-demand/'
 
     class NavSectionEC2:
         """3+ lines of code"""
         ON_DEMAND_PRICING = "On-Demand Pricing"
 
-    def __init__(self, _id, config: DataCollectorConfig, _test_driver=None):
+    def __init__(self, _id, config: EC2DataCollectorConfig, _test_driver=None):
         super().__init__(_id, config, _test_driver)
         self.lock.acquire()
+        self.csv_data_dir = config.csv_data_dir
+        self.db_config = config.db_config
+        self.url = config.url
         if _test_driver is None:
             self.prep_driver()
         self.lock.release()
@@ -626,7 +633,7 @@ class EC2DataCollector(DataCollector):
         d.mkdir(exist_ok=True, parents=True)
         f = d / f"{region}.csv"
 
-        logger.info("{} storing data to csv file {}".format(self._id, f.relative_to(self.csv_data_dir)))
+        logger.debug("{} storing data to csv file {}".format(self._id, f.relative_to(self.csv_data_dir)))
 
         if f.exists():
             logger.warning("Overwriting existing data at '{}'".format(f.absolute()))
@@ -656,12 +663,19 @@ class EC2DataCollector(DataCollector):
         NOTE: contains try/catch for self.driver
         """
 
+        t_thread_start = int(time.time())
         logger.debug(f"{self._id} scrape and store: {region=} {_os=}")
         ################# # Scrape #################
         try:
             instances: List[PGInstance] = self.collect_ec2_data(_os=_os, region=region)
         except ScrprException:  # pragma: no cover
             logger.error("failed to acquire data")
+            _THREAD_RUN_TIMES.append({
+                'id': '-'.join(["ERROR", self.human_date, region, _os]),
+                'num_instances': len(instances),
+                't_run': int(time.time() - t_thread_start)
+            })
+            logger.critical("\033[41madded thread metric '{}'\033[0m".format(('-'.join(["ERROR", self.human_date, region, _os]), 0, int(time.time() - t_thread_start))))
             self.lock.release()
             return False
 
@@ -680,11 +694,26 @@ class EC2DataCollector(DataCollector):
             else:
                 logger.info("{} skip saving to csv file".format(self._id))
 
+            t_run = int(time.time() - t_thread_start)
+            _THREAD_RUN_TIMES.append({
+                'id': '-'.join([self.human_date, region, _os]),
+                'num_instances': len(instances),
+                't_run': t_run
+            })
+            logger.critical("\033[42m(good)\033[0m added thread metric '{}' \033[104m{}/{}s = {}\033[0m".format(
+                '-'.join([self.human_date, region, _os]), len(instances), t_run, len(instances) / t_run
+            ))
             self.lock.release()
             return True
 
         except Exception as e:  # pragma: no cover
             logger.critical("worker {}: While storing data for os '{}' for region '{}', an exception occurred which may result in dataloss: {}".format(self._id, _os, region, e), exc_info=True)
+            _THREAD_RUN_TIMES.append({
+                'id': '-'.join(["ERROR", self.human_date, region, _os]),
+                'num_instances': len(instances),
+                't_run': int(time.time() - t_thread_start)
+            })
+            logger.critical("\033[41madded thread metric {} \033[104m{}\033[0m".format(('-'.join(["ERROR", self.human_date, region, _os]), len(instances), int(time.time() - t_thread_start)), int(time.time() - t_thread_start)))
             self.lock.release()
             raise ScrprException("worker {}: While storing data for os '{}' for region '{}', an exception occurred which may result in dataloss: {}".format(self._id, _os, region, e))
 
@@ -734,7 +763,7 @@ class EC2DataCollector(DataCollector):
         """
         Uses DataCollectorConfig.db (db_config) to yield a connection to a Postgres database
         """
-        logger.info("connecting to database with config: {}".format(self.db_config))
+        logger.debug("connecting to database with config: {}".format(self.db_config))
         conn = psycopg2.connect(
             self.db_config.get_dsl()
         )
@@ -849,8 +878,8 @@ def do_args(sys_args):
         help="print a list of the available regions and exit")
     parser.add_argument("-d", "--csv-data-dir",
         required=False,
-        default=os.path.join(SCRPR_HOME, 'csv-data'),
-        help="base directory for output directory tree or zip file")
+        default=DEFAULT_CSV_DATA_DIR,
+        help="override the base directory for storing csv-data. Has no effect if --no-store-csv is also set.")
     parser.add_argument("--store-csv",
         required=False,
         action=BooleanOptionalAction,
@@ -874,41 +903,41 @@ def do_args(sys_args):
     return args
 
 
-def get_data_dir_size(data_dir: str | Path):
+def get_data_dir_size(data_dir=DEFAULT_CSV_DATA_DIR) -> int:
     """
-    equivalent to du -bs data_dir/* (does not include size of data_dir)
-    """
-    if not Path(data_dir).exists():
-        logger.error("no such directory: {}".format(Path(data_dir).absolute()))
-        return None
-    if not Path(data_dir).is_dir():
-        logger.error("{} is not a directory.".format(Path(data_dir).absolute()))
-        return None
+    Returns the size in bytes of a directory.
+    Roughly equivalent to du -bs data_dir/* (does not include size of data_dir)
 
+    Returns -1 on error.
+    """
     s = 0
-    for base in os.walk(data_dir):
-        # add files' sizes
-        for d2 in base[2]:
-            # print(Path(os.path.join(base[0], d2)).absolute(), Path(os.path.join(base[0], d2)).stat().st_size)
-            s += Path(os.path.join(base[0], d2)).stat().st_size
-        # traverse subdirectories
-        if base[1]:
-            for d1 in base[1]:
-                # print(Path(os.path.join(base[0], d1)).absolute(), Path(os.path.join(base[0], d1)).stat().st_size)
-                s += Path(os.path.join(base[0], d1)).stat().st_size
-                # s += Path(os.path.join(base[0], d1)).stat().st_blksize
-                s += get_data_dir_size(os.path.join(base[0], d1))
-        # nothing left to do
-        else:
+    try:
+        for base in os.walk(data_dir):
+            # add files' sizes
+            for d2 in base[2]:
+                # print(Path(os.path.join(base[0], d2)).absolute(), Path(os.path.join(base[0], d2)).stat().st_size)
+                s += Path(os.path.join(base[0], d2)).stat().st_size
+            # traverse subdirectories
+            if base[1]:
+                for d1 in base[1]:
+                    # print(Path(os.path.join(base[0], d1)).absolute(), Path(os.path.join(base[0], d1)).stat().st_size)
+                    s += Path(os.path.join(base[0], d1)).stat().st_size
+                    s += get_data_dir_size(os.path.join(base[0], d1))
+            # nothing left to do
+            else:
+                return s
             return s
         return s
-    return s
+    except Exception as e:
+        logger.warning("Error getting size of data directory '{}': {}".format(data_dir, e))
+        return -1
 
 
 def get_table_size(db_config: DatabaseConfig, table='ec2_instance_pricing') -> int:
-    if db_config is None:
-        logger.warning("Invalid database configuration while attempting to get size of table '{}', skipping.".format(table))
-        return -1
+    """
+    Return the current on-disk size of a database table.
+    Returns -1 on error.
+    """
     # SELECT pg_size_pretty(pg_total_relation_size('public.ec2_instance_pricing'));  # kB, mB
     try:
         s = sql.SQL("SELECT pg_total_relation_size('public.{}')".format(table))
@@ -923,19 +952,19 @@ def get_table_size(db_config: DatabaseConfig, table='ec2_instance_pricing') -> i
         return r
     except Exception as e:
         logger.error("Could not retrieve size of table '{}': {}".format(table, e))
-        return -2
+        return -1
 
 
 @dataclass
 class MetricData:
     date: str
-    threads: int = 0
+    threads: int = -2
     oses: int = None
     regions: int = None
-    t_init: float = -1
-    t_run: float = -1
-    s_csv: float = 0
-    s_db: float = 0
+    t_init: float = -2
+    t_run: float = -2
+    s_csv: float = -2
+    s_db: float = -2
     reported_errors: int = None
     command_line: str = None
 
@@ -953,27 +982,47 @@ class MetricData:
             "command_line": sys.argv[1:],
         })
 
-    def store(self, db_config: DatabaseConfig):
+    def store(self, db_config: DatabaseConfig) -> bool:
+        """
+        Save a run's collected metrics to a Postgres table 'metric_data'.
+        """
         if db_config is None:
             logger.warn("not storing data")
-            return
-        conn = psycopg2.connect(db_config.get_dsl())
-        curr = conn.cursor()
-        curr.execute("""\
-            INSERT INTO metric_data (date, threads, oses, regions, t_init, t_run, s_csv, s_db, reported_errors, command_line)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (self.date, self.threads, self.oses, self.regions, self.t_init, self.t_run, self.s_csv, self.s_db, self.reported_errors, self.command_line)
-        )
-        conn.commit()
-        conn.close()
+            return False
+        try:
+            conn = psycopg2.connect(db_config.get_dsl())
+            curr = conn.cursor()
+            curr.execute("""\
+                INSERT INTO metric_data (date, threads, oses, regions, t_init, t_run, s_csv, s_db, reported_errors, command_line)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (self.date, self.threads, self.oses, self.regions, self.t_init, self.t_run, self.s_csv, self.s_db, self.reported_errors, self.command_line)
+            )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.warning("Error saving metric data to database: {}".format(e))
+            return False
+
+    def store_csv(self, filename=DEFAULT_METRICS_DATA_FILE) -> bool:
+        """
+        Save metrics data in csv format to METRICS_DATA_FILE
+        Returns True on success and False otherwise.
+        """
+        try:
+            with open(filename, 'a') as md:
+                csv.DictWriter(md, fieldnames=list(self.as_dict().keys()), delimiter='\t').writerow(self.as_dict())
+            return True
+        except Exception as e:
+            logger.warning("Error saving metric data to file '{}': {}".format(filename, e))
+            return False
 
 
 @dataclass
 class MainConfig:
     """type hints"""
     follow: bool
-    log_file: str
     thread_count: int
     overdrive_madness: bool
     compress: bool
@@ -981,10 +1030,12 @@ class MainConfig:
     operating_systems: List[str]
     get_operating_systems: bool
     get_regions: bool
-    csv_data_dir: str
     store_csv: bool
     store_db: bool
     v: int
+    # hard-code candidates
+    log_file: str
+    csv_data_dir: str
 
     def load(self):
         raise NotImplementedError
@@ -1021,9 +1072,18 @@ def init_logging(verbosity: int, follow: bool, log_file: str | Path):
     return logger
 
 
+def get_date():
+    """
+    Get an unaware datestamp for ID purposes..
+    """
+    return datetime.fromtimestamp(floor(time.time())).strftime("%Y-%m-%d")
+
+
 def main(args: MainConfig):  # noqa: C901
     t_main = time.time()
-    human_date: str = datetime.fromtimestamp(floor(time.time())).strftime("%Y-%m-%d")
+    # set the collection date relative to time main() was called
+    # this applies to all data stored in database
+    human_date: str = get_date()
 
     metric_data = MetricData(human_date)
     metric_data.command_line = str(args.__dict__)
@@ -1040,6 +1100,7 @@ def main(args: MainConfig):  # noqa: C901
     logger.warning("This program is still under development, log output may be ... less than scrupulous.")
     logger.info("Starting program with PID {}".format(os.getpid()))
 
+    # argparsing
     if args.store_db:
         metric_data.s_db = -1
         db_config = DatabaseConfig()
@@ -1050,9 +1111,43 @@ def main(args: MainConfig):  # noqa: C901
     else:
         db_config = None
 
-    config = DataCollectorConfig(
+    # argparsing
+    if args.store_csv:
+        csv_data_dir = args.csv_data_dir
+    else:
+        csv_data_dir = None
+
+    # ??? should I add store_db and store_csv parameters here? Right now, the
+    # EC2DataCollector decides whether or not to store in db/csv by checking if
+    # the value is None.
+    #
+    # Upside: it would lead to less hashtag argparsing (wouldn't have to ask
+    # "are we storing to csv/db" as frequently)
+    # Downside: Every other subclass of DataCollector would require these
+    # parameters too, so it would make sense to move all of these parameters to
+    # the base DataCollectorConfig, even though the DataCollector base class
+    # would never use them... right? (ironically, it could use, right now,
+    # metric_data_file, which you removed from config in favor of hard-coding
+    # it...)
+    #
+    # TL:DR; csv_data_dir needs to be None here, but later on when calling
+    # get_data_dir_size, we need to know the csv_data_dir in order to check it.
+    #
+    # *I* think the problem is how I'm treating SCRPR_HOME. Shit's not
+    # temporary, it is in the user's XDG data home directory. *It will be
+    # there.*
+    # the MainConfig parameter csv_data_dir is for now assumed to be set from
+    # the command line.  When this is done, it is like overriding a
+    # configuration setting (even though MetricData().load() isn't implemented
+    # as it is for DatabaseConfig().), so, the result of the measurement would
+    # be moot. ...  Could the problem be the measurement itself?! ... no, we
+    # want to measure the size of the csv_data_dir. I think that is a good thing
+    # to do. Therefore I think the right thing to do is hardcode the path to the
+    # csv_data_dir, somewhere, for cases like this.
+    config = EC2DataCollectorConfig(
         human_date=human_date,
-        csv_data_dir=args.csv_data_dir,
+        # csv_data_dir=args.csv_data_dir,
+        csv_data_dir=csv_data_dir,
         db_config=db_config,
     )
 
@@ -1062,6 +1157,7 @@ def main(args: MainConfig):  # noqa: C901
         logger.debug("{}={}".format(k, v))
     logger.debug("{}".format(str(db_config)))
 
+    # argparsing
     if args.store_db:
         s_db_start = get_table_size(db_config)
     if args.store_csv:
@@ -1073,23 +1169,27 @@ def main(args: MainConfig):  # noqa: C901
     os_region_collector = EC2DataCollector('os_region_collector', config=config)
     tgt_oses = os_region_collector.get_available_operating_systems()
     tgt_regions = os_region_collector.get_available_regions()
+    # argparsing
     if args.get_operating_systems:
         logger.debug("tgt_oses = {}".format(tgt_oses))
         print("Available Operating Systems:")
         for _os in tgt_oses:
             print(f"\t'{_os}'")
+    # argparsing
     if args.get_regions:
         logger.debug("tgt_regions = {}".format(tgt_regions))
         print("Available Regions:")
         for r in tgt_regions:
             print(f"\t{r}")
     os_region_collector.driver.close()
+    # argparsing
     if args.get_operating_systems or args.get_regions:
         exit(0)
 
     ##########################################################################
     # main
     ##########################################################################
+    # argparsing
     if args.regions is not None:
         logger.debug("Validating provided regions...")
         for r in args.regions.split(','):
@@ -1102,6 +1202,7 @@ def main(args: MainConfig):  # noqa: C901
         tgt_regions = args.regions.split(',')
     metric_data.regions = len(tgt_regions)
 
+    # argparsing
     if args.operating_systems is not None:
         logger.debug("Validating provided operating systems...")
         for o in args.operating_systems.split(','):
@@ -1115,6 +1216,7 @@ def main(args: MainConfig):  # noqa: C901
     metric_data.oses = len(tgt_oses)
 
     num_threads = cpu_count()
+    # argparsing
     if args.thread_count < 1:
         num_threads = 1
     elif args.thread_count > cpu_count() and not args.overdrive_madness:
@@ -1131,7 +1233,8 @@ def main(args: MainConfig):  # noqa: C901
     logger.debug("thread targets ({}) = {}".format(len(thread_tgts), thread_tgts))
 
     metric_data.t_init = 0
-    thread_thing = ThreadDivvier(config=config, thread_count=num_threads)
+    thread_thing = ThreadDivvier(thread_count=num_threads)
+    thread_thing.init_scrapers_of(config=config)
     t_prog_init = time.time() - t_main
     metric_data.t_init = t_prog_init
     logger.info("Initialized in {}".format(seconds_to_timer(time.time() - t_main)))
@@ -1142,40 +1245,58 @@ def main(args: MainConfig):  # noqa: C901
     ##########################################################################
     # after data has been collected
     ##########################################################################
-    if args.compress:
+    # argparsing
+    if args.compress and csv_data_dir:
         compress_data(config.csv_data_dir, 'ec2', human_date, rm_tree=True)
-        # ERRORS.append("compression not implemented.")
 
+    # argparsing
     if args.store_csv:
         metric_data.s_csv = get_data_dir_size(config.csv_data_dir) - s_csv_start
 
+    # argparsing
     if args.store_db:
         s_db = get_table_size(db_config) - s_db_start
         metric_data.s_db = s_db
 
-    t_prog_tot = time.time() - t_main
-    metric_data.t_run = t_prog_tot
+    metric_data.t_run = time.time() - t_main
     metric_data.reported_errors = len(ERRORS)
 
     logger.debug("run metrics:")
     for k, v in metric_data.as_dict().items():
         logger.debug(f"{k}: {v}")
-    logger.debug("db total size:\t{:.2f}M".format(get_table_size(db_config) / 1024 / 1024))
-    logger.debug("csv total size:\t{:.2f}M".format(get_data_dir_size(config.csv_data_dir) / 1024 / 1024))
-    logging.debug("Saving run's metric data to '{}'".format(args.metric_data_file))
-    with open(os.path.join(SCRPR_HOME, "metric-data.csv"), 'a') as md:
-        csv.DictWriter(md, fieldnames=list(metric_data.as_dict().keys()), delimiter='\t').writerow(metric_data.as_dict())
-        # md.write(f"{num_threads}\t{len(tgt_oses)}\t{len(tgt_regions)}\t{t_prog_init:.2f}\t{t_prog_tot:.2f}\t{(t_size / 1024 / 1024):.3f}M\n")
+
+    # ?? is it safe to assume db_config will always be available?? I mean, what if that assumption is made, and one day, its *not*?
+    if db_config:
+        logger.debug("db total size:\t{:.2f}M".format(get_table_size(db_config) / 1024 / 1024))
+    logger.debug("csv total size:\t{:.2f}M".format(get_data_dir_size(DEFAULT_CSV_DATA_DIR) / 1024 / 1024))
+    logging.debug("Saving run's metric data to '{}'".format(DEFAULT_METRICS_DATA_FILE))
     metric_data.store(db_config)
-    logger.info("Program finished in {}".format(seconds_to_timer(time.time() - t_main)))
+    logger.info("Program finished in {}".format(seconds_to_timer(metric_data.t_run)))
     logger.info('---------------------------------------------------')
     logger.info("errors ({}):".format(len(ERRORS)))
     for e in ERRORS:
         logger.error(e)
     logger.info('---------------------------------------------------')
 
+    conn = psycopg2.connect(db_config.get_dsl())
+    curr = conn.cursor()
+    for thread_run_time in _THREAD_RUN_TIMES:
+        try:
+            curr.execute("INSERT INTO ec2_thread_times VALUES (%s, %s, %s)",
+                (thread_run_time['id'], thread_run_time['num_instances'], thread_run_time['t_run'])
+            )
+            conn.commit()
+        except UniqueViolation:
+            logger.error("blah.")
+            continue
+    conn.close()
+    with open('1999-01-01' + "-thread-metrics-" + ".txt", 'a') as f:
+        for thread_run_time in _THREAD_RUN_TIMES:
+            csv.DictWriter(f, fieldnames=['id', 'num_instances', 't_run'], delimiter='\t').writerow(thread_run_time)
+
 
 if __name__ == '__main__':
     import sys
     args = MainConfig(**do_args(sys.argv[1:]).__dict__)
+
     raise SystemExit(main(args))
