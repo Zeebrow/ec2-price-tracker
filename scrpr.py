@@ -226,7 +226,7 @@ class ThreadDivvier:
             threads.append(t)
             # time.sleep(0.1)
             # logger.critical(f"\033[44m{psutil.Process(t.native_id).memory_full_info().rss=}\033[0m")
-            
+
         # wait until each driver's init is finished
         # drivers are only added to self.init_drivers *after* they are done being initialized
         # i.e. when __init__ has finished
@@ -1106,7 +1106,7 @@ def get_date():
 
 
 def main(args: MainConfig):  # noqa: C901
-    main_process = psutil.Process()
+    main_process = psutil.Process()  # noqa: F841
 
     t_main = time.time()
     # set the collection date relative to time main() was called
@@ -1328,7 +1328,7 @@ def main(args: MainConfig):  # noqa: C901
             conn.commit()
             continue
     if metric_store_errors > 1:
-            logger.error("failed to store")
+        logger.error("failed to store")
     conn.close()
     with open('1999-01-01' + "-thread-metrics-" + ".txt", 'a') as f:
         for thread_run_time in _THREAD_RUN_TIMES:
