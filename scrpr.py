@@ -27,6 +27,7 @@ from uuid import uuid1
 from contextlib import contextmanager
 import dotenv
 from collections import OrderedDict
+import psutil
 
 from selenium.webdriver.common.by import By
 # from selenium.webdriver.firefox.service import Service
@@ -54,6 +55,14 @@ DEFAULT_CSV_DATA_DIR = os.path.join(SCRPR_HOME, "csv-data")
 DEFAULT_METRICS_DATA_FILE = os.path.join(SCRPR_HOME, "metric-data.txt")
 _THREAD_RUN_TIMES = []
 
+####################### memory stuf
+TOTAL_MEM_SYS = psutil.virtual_memory().total
+FREE_MEM_SYS = psutil.virtual_memory().free
+MAIN_PROCESS = psutil.Process()
+INITIAL_MEM = MAIN_PROCESS.memory_info()
+
+
+#######################
 
 ###############################################################################
 # classes and functions
@@ -179,7 +188,13 @@ class ThreadDivvier:
         try:
             # @@@ implying type
             # this feels like a common problem that I don't have an immediate answer for.
-            self.drivers.append(EC2DataCollector(_id=thread_id, config=config))
+
+            d = EC2DataCollector(_id=thread_id, config=config)
+            # after = psutil.Process().memory_info().rss
+            # logger.critical(f"\033[44m{thread_id} {after=}\033[0m")
+            # print("change = {}".format(after.rss - before.rss))
+
+            self.drivers.append(d)
             logger.debug(f"initialized {thread_id=}")
         except ScrprCritical as e:
             logger.critical(e, exc_info=True)
@@ -192,8 +207,11 @@ class ThreadDivvier:
         next_id = 0  # name shown in log messages
         # start init for each driver
         logger.info("initializing {} drivers".format(self.thread_count))
+        threads = []
         for _ in range(self.thread_count):
             logger.debug("initializing new driver with id '{}'".format(next_id))
+            # before = psutil.Process().memory_info().rss
+            # logger.critical(f"\033[44mthread {next_id} {before=}\033[0m")
             t = threading.Thread(
                 name=next_id,
                 target=self.init_scraper,
@@ -201,14 +219,23 @@ class ThreadDivvier:
                 daemon=False,
             )
             next_id += 1
-            t.start()
 
+            t.start()
+            # always the same as the one below
+            # logger.critical(f"\033[44m{psutil.Process(t.native_id).memory_full_info().rss=}\033[0m")
+            threads.append(t)
+            # time.sleep(0.1)
+            # logger.critical(f"\033[44m{psutil.Process(t.native_id).memory_full_info().rss=}\033[0m")
+            
         # wait until each driver's init is finished
         # drivers are only added to self.init_drivers *after* they are done being initialized
         # i.e. when __init__ has finished
         while len(self.drivers) != self.thread_count:
             pass
+        for t in threads:
+            t.join()
         logger.debug("Finished initializing {} scrapers".format(len(self.drivers)))
+
         return
 
     def run_threads(self, arg_queue: List[tuple]):
@@ -216,7 +243,7 @@ class ThreadDivvier:
         Takes a list of tuples (operating_system, region) and gathers corresponding EC2 instance pricing data.
         Items in the arg_queue are removed as work is completed, until there are no items left in the queue.
         """
-        logger.info(f"running {self.thread_count} threads")
+        logger.debug(f"running {self.thread_count} threads")
         _arg_queue = copy(arg_queue)  # feels wrong to pop from a queue that might could be acessed outside of func
         logger.debug("Test to make sure drivers are not locked...")
         for d in self.drivers:
@@ -231,7 +258,7 @@ class ThreadDivvier:
                     except IndexError:
                         logger.warning(f"driver {d._id} tried to pop from an empty queue")
                         continue
-                    logger.info(f"{len(_arg_queue)} left in queue")
+                    logger.debug(f"{len(_arg_queue)} left in queue")
                     # t = threading.Thread(name='-'.join(args), target=d.scrape_and_store, args=args, daemon=False)
                     t = threading.Thread(target=d.scrape_and_store, args=args, daemon=False)
                     t.start()
@@ -533,7 +560,7 @@ class EC2DataCollector(DataCollector):
             #################
             # scrape
             #################
-            logger.info("{} scraping {} pages for os: {} region {}...".format(self._id, num_pages, _os, region))
+            logger.debug("{} scraping {} pages for os: {} region {}...".format(self._id, num_pages, _os, region))
             for i in range(int(num_pages)):
                 logger.debug(f"scraping page {i}")
                 # only cycle to next page after it has been scraped
@@ -662,7 +689,6 @@ class EC2DataCollector(DataCollector):
         This function is meant to be run in a ThreadDivvier singleton.
         NOTE: contains try/catch for self.driver
         """
-
         t_thread_start = int(time.time())
         logger.debug(f"{self._id} scrape and store: {region=} {_os=}")
         ################# # Scrape #################
@@ -675,7 +701,7 @@ class EC2DataCollector(DataCollector):
                 'num_instances': len(instances),
                 't_run': int(time.time() - t_thread_start)
             })
-            logger.critical("\033[41madded thread metric '{}'\033[0m".format(('-'.join(["ERROR", self.human_date, region, _os]), 0, int(time.time() - t_thread_start))))
+            # logger.critical("\033[41madded thread metric '{}'\033[0m".format(('-'.join(["ERROR", self.human_date, region, _os]), 0, int(time.time() - t_thread_start))))
             self.lock.release()
             return False
 
@@ -683,16 +709,16 @@ class EC2DataCollector(DataCollector):
             ################# # Postgres #################
             if self.db_config is not None:
                 stored_count, error_count = self.store_postgres(instances)
-                logger.info("{} stored {}/{} records with {} errors.".format(self._id, stored_count, len(instances), error_count))
+                logger.debug("{} stored {}/{} records for {}: {} with {} errors.".format(self._id, stored_count, len(instances), region, _os, error_count))
             else:
-                logger.info("{} skip saving to database".format(self._id))
+                logger.debug("{} skip saving to database".format(self._id))
 
             ################# # CSV #################
             if self.csv_data_dir is not None:
                 stored_count, error_count = self.save_csv(region, _os, instances)
-                logger.info("{} saved {}/{} csv rows with {} errors.".format(self._id, stored_count, len(instances), error_count))
+                logger.debug("{} saved {}/{} csv rows for {}: {} with {} errors.".format(self._id, stored_count, len(instances), region, _os, error_count))
             else:
-                logger.info("{} skip saving to csv file".format(self._id))
+                logger.debug("{} skip saving to csv file".format(self._id))
 
             t_run = int(time.time() - t_thread_start)
             _THREAD_RUN_TIMES.append({
@@ -700,9 +726,9 @@ class EC2DataCollector(DataCollector):
                 'num_instances': len(instances),
                 't_run': t_run
             })
-            logger.critical("\033[42m(good)\033[0m added thread metric '{}' \033[104m{}/{}s = {}\033[0m".format(
-                '-'.join([self.human_date, region, _os]), len(instances), t_run, len(instances) / t_run
-            ))
+            # logger.critical("\033[42m(good)\033[0m added thread metric '{}' \033[104m{}/{}s = {}\033[0m".format(
+            #     '-'.join([self.human_date, region, _os]), len(instances), t_run, len(instances) / t_run
+            # ))
             self.lock.release()
             return True
 
@@ -713,7 +739,7 @@ class EC2DataCollector(DataCollector):
                 'num_instances': len(instances),
                 't_run': int(time.time() - t_thread_start)
             })
-            logger.critical("\033[41madded thread metric {} \033[104m{}\033[0m".format(('-'.join(["ERROR", self.human_date, region, _os]), len(instances), int(time.time() - t_thread_start)), int(time.time() - t_thread_start)))
+            # logger.critical("\033[41madded thread metric {} \033[104m{}\033[0m".format(('-'.join(["ERROR", self.human_date, region, _os]), len(instances), int(time.time() - t_thread_start)), int(time.time() - t_thread_start)))
             self.lock.release()
             raise ScrprException("worker {}: While storing data for os '{}' for region '{}', an exception occurred which may result in dataloss: {}".format(self._id, _os, region, e))
 
@@ -1080,6 +1106,8 @@ def get_date():
 
 
 def main(args: MainConfig):  # noqa: C901
+    main_process = psutil.Process()
+
     t_main = time.time()
     # set the collection date relative to time main() was called
     # this applies to all data stored in database
@@ -1096,6 +1124,7 @@ def main(args: MainConfig):  # noqa: C901
         follow=args.follow,
         log_file=args.log_file
     )
+    # logger.critical(f"\033[44mmain mem: {main_process.memory_info().rss}\033[0m")
 
     logger.warning("This program is still under development, log output may be ... less than scrupulous.")
     logger.info("Starting program with PID {}".format(os.getpid()))
@@ -1166,9 +1195,11 @@ def main(args: MainConfig):  # noqa: C901
     ##########################################################################
     # regions and operating systems
     ##########################################################################
+    # logger.critical(f"\033[44mmem before region/os collection: {main_process.memory_info().rss}\033[0m")
     os_region_collector = EC2DataCollector('os_region_collector', config=config)
     tgt_oses = os_region_collector.get_available_operating_systems()
     tgt_regions = os_region_collector.get_available_regions()
+    # logger.critical(f"\033[44mmem after region/os collection: {main_process.memory_info().rss}\033[0m")
     # argparsing
     if args.get_operating_systems:
         logger.debug("tgt_oses = {}".format(tgt_oses))
@@ -1182,6 +1213,7 @@ def main(args: MainConfig):  # noqa: C901
         for r in tgt_regions:
             print(f"\t{r}")
     os_region_collector.driver.close()
+    # logger.critical(f"\033[44mmem after region/os collection close: {main_process.memory_info().rss}\033[0m")
     # argparsing
     if args.get_operating_systems or args.get_regions:
         exit(0)
@@ -1233,14 +1265,18 @@ def main(args: MainConfig):  # noqa: C901
     logger.debug("thread targets ({}) = {}".format(len(thread_tgts), thread_tgts))
 
     metric_data.t_init = 0
+    # logger.critical(f"\033[44mmem before ThreadDivvier init: {main_process.memory_info().rss}\033[0m")
     thread_thing = ThreadDivvier(thread_count=num_threads)
+    # logger.critical(f"\033[44mmem before init_scrapers: {main_process.memory_info().rss}\033[0m")
     thread_thing.init_scrapers_of(config=config)
+    # logger.critical(f"\033[44mmem after init_scrapers: {main_process.memory_info().rss}\033[0m")
     t_prog_init = time.time() - t_main
     metric_data.t_init = t_prog_init
-    logger.info("Initialized in {}".format(seconds_to_timer(time.time() - t_main)))
+    logger.debug("Initialized in {}".format(seconds_to_timer(time.time() - t_main)))
 
     # blocks until all threads have finished running, and thread_tgts is exhausted
     thread_thing.run_threads(thread_tgts)
+    # logger.critical(f"\033[44mmem after scrapers ran: {main_process.memory_info().rss}\033[0m")
 
     ##########################################################################
     # after data has been collected
@@ -1280,15 +1316,19 @@ def main(args: MainConfig):  # noqa: C901
 
     conn = psycopg2.connect(db_config.get_dsl())
     curr = conn.cursor()
+    metric_store_errors = 0
     for thread_run_time in _THREAD_RUN_TIMES:
         try:
-            curr.execute("INSERT INTO ec2_thread_times VALUES (%s, %s, %s)",
-                (thread_run_time['id'], thread_run_time['num_instances'], thread_run_time['t_run'])
+            curr.execute("INSERT INTO ec2_thread_times VALUES (%s, %s, %s, %s)",
+                (thread_run_time['id'], thread_run_time['num_instances'], thread_run_time['t_run'], datetime.utcnow())
             )
             conn.commit()
         except UniqueViolation:
-            logger.error("blah.")
+            metric_store_errors += 1
+            conn.commit()
             continue
+    if metric_store_errors > 1:
+            logger.error("failed to store")
     conn.close()
     with open('1999-01-01' + "-thread-metrics-" + ".txt", 'a') as f:
         for thread_run_time in _THREAD_RUN_TIMES:

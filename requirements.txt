@@ -8,6 +8,7 @@ iniconfig==2.0.0
 outcome==1.2.0
 packaging==23.0
 pluggy==1.0.0
+psutil==5.9.4
 psycopg2==2.9.5
 PySocks==1.7.1
 python-dotenv==0.21.1
