@@ -53,6 +53,7 @@ def test_do_args_defaults_implement_main_config():
         store_csv=True,
         store_db=True,
         v=0,
+        check_size=False,
     )
     args = scrpr.do_args('')
     mc = scrpr.MainConfig(**vars(args))

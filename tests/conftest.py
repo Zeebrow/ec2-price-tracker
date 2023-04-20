@@ -14,7 +14,7 @@ import scrpr
 # from scrpr import DataCollector, DataCollectorConfig, DatabaseConfig
 
 
-print(os.getcwd())
+# For testing, use the same postgres host as production, but use a test table.
 TEST_CONFIG_FILE = '.env-test'
 TEST_TABLE_NAME = 'ec2_instance_pricing_test'
 

@@ -923,6 +923,11 @@ def do_args(sys_args):
         default=0,
         help='increase logging output')
 
+    parser.add_argument("--check-size",
+        required=False,
+        action='store_true',
+        help='return the current size of the database and csv directory, then exit.')
+
     args = parser.parse_args(sys_args)
 
     # return MainConfig(args)
@@ -1059,6 +1064,7 @@ class MainConfig:
     store_csv: bool
     store_db: bool
     v: int
+    check_size: bool
     # hard-code candidates
     log_file: str
     csv_data_dir: str
@@ -1128,6 +1134,26 @@ def main(args: MainConfig):  # noqa: C901
 
     logger.warning("This program is still under development, log output may be ... less than scrupulous.")
     logger.info("Starting program with PID {}".format(os.getpid()))
+
+    if args.check_size:
+        s_db = -1
+        try:
+            db_config = DatabaseConfig()
+            db_config.load()
+            s_db = get_table_size(db_config)
+        except Exception as e:
+            print(e)
+        try:
+            s_csv = get_data_dir_size()
+        except Exception as e:
+            print(e)
+        print("database:")
+        print("{:.2f} MB".format(s_db / 1024 / 1024))
+        print()
+        print("csv data:")
+        print("{:.2f} MB".format(s_csv / 1024 / 1024))
+        raise SystemExit(0)
+
 
     # argparsing
     if args.store_db:
