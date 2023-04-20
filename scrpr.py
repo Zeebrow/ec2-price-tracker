@@ -206,7 +206,7 @@ class ThreadDivvier:
         """
         next_id = 0  # name shown in log messages
         # start init for each driver
-        logger.info("initializing {} drivers".format(self.thread_count))
+        logger.debug("initializing {} drivers".format(self.thread_count))
         threads = []
         for _ in range(self.thread_count):
             logger.debug("initializing new driver with id '{}'".format(next_id))
@@ -266,7 +266,7 @@ class ThreadDivvier:
         # determine when all threads have finished
         # wait to return until all threads have finished their work
         threads_finished = []
-        logger.info("waiting for last threads to finish juuuust a sec")
+        logger.debug("waiting for last threads to finish juuuust a sec")
         while len(threads_finished) != self.thread_count:
             # @@@ bug when number of threads is greater than the arg queue
             for d in self.drivers:
@@ -1332,12 +1332,12 @@ def main(args: MainConfig):  # noqa: C901
     logger.debug("csv total size:\t{:.2f}M".format(get_data_dir_size(DEFAULT_CSV_DATA_DIR) / 1024 / 1024))
     logging.debug("Saving run's metric data to '{}'".format(DEFAULT_METRICS_DATA_FILE))
     metric_data.store(db_config)
-    logger.info("Program finished in {}".format(seconds_to_timer(metric_data.t_run)))
-    logger.info('---------------------------------------------------')
-    logger.info("errors ({}):".format(len(ERRORS)))
+    logger.info("Program finished with {} errors in {}".format(len(ERRORS), seconds_to_timer(metric_data.t_run)))
+    logger.debug('---------------------------------------------------')
+    logger.debug("errors ({}):".format(len(ERRORS)))
     for e in ERRORS:
         logger.error(e)
-    logger.info('---------------------------------------------------')
+    logger.debug('---------------------------------------------------')
 
     conn = psycopg2.connect(db_config.get_dsl())
     curr = conn.cursor()
