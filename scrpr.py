@@ -1154,7 +1154,6 @@ def main(args: MainConfig):  # noqa: C901
         print("{:.2f} MB".format(s_csv / 1024 / 1024))
         raise SystemExit(0)
 
-
     # argparsing
     if args.store_db:
         metric_data.s_db = -1
