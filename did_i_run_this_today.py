@@ -59,8 +59,15 @@ def all_threads_counts():
 
     tss = dict(sorted(ts.items()))
     print("thread count\tnumber of runs w/ count")
+    total_num_runs = 0
+    total_num_threads = 0
     for k, v in tss.items():
         print(f"{k}:\t\t\t{v}")
+        total_num_runs += v
+        total_num_threads += k * v
+    print("-----------------------------------")
+    print("avg. threads per run: {:.2f}".format(total_num_threads/total_num_runs))
+    print("total number of runs: {}".format(total_num_runs))
 
 
 if __name__ == '__main__':
