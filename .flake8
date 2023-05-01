@@ -2,6 +2,7 @@
 ignore = E501,E128,E266,F401
 filename = 
   ./scrpr.py
+  ./did_i_run_this_today.py
   ./ec2/instance.py
   ./tests/test_*.py
   ./tests/*_test.py

@@ -1104,6 +1104,13 @@ def init_logging(verbosity: int, follow: bool, log_file: str | Path):
     return logger
 
 
+def get_date_as_datetime():
+    """
+    Get an unaware datestamp for ID purposes..
+    """
+    return datetime.fromtimestamp(floor(time.time()))
+
+
 def get_date():
     """
     Get an unaware datestamp for ID purposes..
