@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 import scrpr
@@ -23,3 +25,4 @@ def test_metric_data_stores(db, pg_dbconfig):
     )
     rows = curr.fetchall()
     assert len(rows) == 2
+    assert json.loads(rows[1][10])

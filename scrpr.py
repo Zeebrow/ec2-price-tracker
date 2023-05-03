@@ -1,6 +1,6 @@
 import time
-from datetime import datetime
 import csv
+import datetime
 from pathlib import Path
 from math import floor
 from typing import List, Tuple
@@ -28,6 +28,7 @@ from contextlib import contextmanager
 import dotenv
 from collections import OrderedDict
 import psutil
+import json
 
 from selenium.webdriver.common.by import By
 # from selenium.webdriver.firefox.service import Service
@@ -988,7 +989,7 @@ def get_table_size(db_config: DatabaseConfig, table='ec2_instance_pricing') -> i
 
 @dataclass
 class MetricData:
-    date: str
+    date: datetime = None
     threads: int = -2
     oses: int = None
     regions: int = None
@@ -997,7 +998,10 @@ class MetricData:
     s_csv: float = -2
     s_db: float = -2
     reported_errors: int = None
-    command_line: str = None
+    command_line: dict = None
+
+    def __init__(self, date):
+        self.date = date
 
     def as_dict(self):
         return OrderedDict({
@@ -1010,7 +1014,7 @@ class MetricData:
             "s_csv": self.s_csv,
             "s_db": self.s_db,
             "reported_errors": self.reported_errors,
-            "command_line": sys.argv[1:],
+            "command_line": self.command_line,
         })
 
     def store(self, db_config: DatabaseConfig) -> bool:
@@ -1027,7 +1031,7 @@ class MetricData:
                 INSERT INTO metric_data (date, threads, oses, regions, t_init, t_run, s_csv, s_db, reported_errors, command_line)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (self.date, self.threads, self.oses, self.regions, self.t_init, self.t_run, self.s_csv, self.s_db, self.reported_errors, self.command_line)
+                (self.date, self.threads, self.oses, self.regions, self.t_init, self.t_run, self.s_csv, self.s_db, self.reported_errors, json.dumps(self.command_line))
             )
             conn.commit()
             conn.close()
@@ -1104,18 +1108,11 @@ def init_logging(verbosity: int, follow: bool, log_file: str | Path):
     return logger
 
 
-def get_date_as_datetime():
-    """
-    Get an unaware datestamp for ID purposes..
-    """
-    return datetime.fromtimestamp(floor(time.time()))
-
-
 def get_date():
     """
     Get an unaware datestamp for ID purposes..
     """
-    return datetime.fromtimestamp(floor(time.time())).strftime("%Y-%m-%d")
+    return datetime.datetime.now()
 
 
 def main(args: MainConfig):  # noqa: C901
@@ -1124,10 +1121,11 @@ def main(args: MainConfig):  # noqa: C901
     t_main = time.time()
     # set the collection date relative to time main() was called
     # this applies to all data stored in database
-    human_date: str = get_date()
+    datestamp = get_date()
+    human_date: str = datestamp.strftime("%Y-%m-%d")
 
     metric_data = MetricData(human_date)
-    metric_data.command_line = str(args.__dict__)
+    metric_data.command_line = args.__dict__
 
     ##########################################################################
     # logging
@@ -1349,16 +1347,23 @@ def main(args: MainConfig):  # noqa: C901
     conn = psycopg2.connect(db_config.get_dsl())
     curr = conn.cursor()
     metric_store_errors = 0
+    # Store run time of each thread
+    # TODO: use floats
+    # "id"                                          "t_run" "num_instances" "datetime_utc"
+    # "2023-03-07-eu-south-2-Windows with SQL Web"	74	    21	            "2023-03-07 05:49:17.782281"
     for thread_run_time in _THREAD_RUN_TIMES:
         try:
             curr.execute("INSERT INTO ec2_thread_times VALUES (%s, %s, %s, %s)",
-                (thread_run_time['id'], thread_run_time['num_instances'], thread_run_time['t_run'], datetime.utcnow())
+                (thread_run_time['id'], thread_run_time['num_instances'],
+                    thread_run_time['t_run'], datestamp)
             )
             conn.commit()
         except UniqueViolation:
             metric_store_errors += 1
             conn.commit()
             continue
+        except Exception:
+            logger.error("misconfigured thread_run_times!")
     if metric_store_errors > 1:
         logger.error("failed to store")
     conn.close()
