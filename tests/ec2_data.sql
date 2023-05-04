@@ -62,5 +62,23 @@ VALUES (
     123456,
     234567,
     0,
-    'test command line'
+    '{"follow": false, "thread_count": -1, "overdrive_madness": false, "compress": false, "regions": ["test1"], "operating_systems": ["test1"], "get_operating_systems": false, "get_regions": false, "store_csv": false, "store_db": false, "v": -1, "check_size": false, "log_file": "test1", "csv_data_dir": "test1"}'
 );
+-- '{"follow": False, "thread_count": 24, "overdrive_madness": False, "compress": True, "regions": None, "operating_systems": None, "get_operating_systems": False, "get_regions": False, "store_csv": True, "store_db": True, "v": 0, "log_file": "/some/log/file/full/path.log", "csv_data_dir": "/some/csv/data/dir/full/path"}'
+    -- "{'follow': False, 'thread_count': -1, 'overdrive_mad...tore_csv': False, 'store_db': False, 'v': -1, 'check_size': False, 'log_file': 'test', 'csv_data_dir': 'test'}"
+
+-- CREATE TABLE IF NOT EXISTS command_line (
+--     run_no INTEGER,
+--     follow BOOLEAN,
+--     thread_count INTEGER,
+--     overdrive_madness BOOLEAN,
+--     compress BOOLEAN,
+--     regions VARCHAR(255),
+--     operating_systems VARCHAR(255),
+--     get_operating_systems BOOLEAN,
+--     get_regions BOOLEAN,
+--     store_csv BOOLEAN,
+--     store_db BOOLEAN,
+--     log_file VARCHAR(255),
+--     csv_data_dir VARCHAR(255)
+-- );

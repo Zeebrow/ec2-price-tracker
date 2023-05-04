@@ -848,12 +848,12 @@ def do_args(sys_args):
         "log_file": "<XDG_SHARE_DIR>/scrpr/logs/scrpr.log"
         "thread_count": 24,
         "overdrive_madness": False,
-        "no_compress": False,
+        "compress": False,
         "regions": None,
         "operating_systems": None,
         "get_operating_systems": False,
         "get_regions": False,
-        "data_dir": "<XDG_SHARE_DIR>/scrpr/csv-data",
+        "csv_data_dir": "<XDG_SHARE_DIR>/scrpr/csv-data",
         "store_csv": True,
         "store_db": True,
         "v": 0
@@ -988,7 +988,39 @@ def get_table_size(db_config: DatabaseConfig, table='ec2_instance_pricing') -> i
 
 
 @dataclass
+class MainConfig:
+    """
+    Required arguments to run main()
+    These are provided as a Namespace by do_args()
+    """
+    follow: bool
+    thread_count: int
+    overdrive_madness: bool
+    compress: bool
+    regions: List[str]
+    operating_systems: List[str]
+    get_operating_systems: bool
+    get_regions: bool
+    store_csv: bool
+    store_db: bool
+    v: int
+    check_size: bool
+    log_file: str
+    csv_data_dir: str
+
+    def load(self):
+        raise NotImplementedError
+
+    def __repr__(self):
+        return f"""\
+            {__file__} {self.__dict__}
+        """
+
+@dataclass
 class MetricData:
+    """
+    Run metadata stored after every successful run
+    """
     date: datetime = None
     threads: int = -2
     oses: int = None
@@ -998,10 +1030,40 @@ class MetricData:
     s_csv: float = -2
     s_db: float = -2
     reported_errors: int = None
-    command_line: dict = None
+    _command_line: dict = None
 
     def __init__(self, date):
         self.date = date
+
+    @property
+    def command_line(self):
+        return self._command_line
+
+    @command_line.setter
+    def command_line(self, cl):
+        if isinstance(cl, MainConfig):
+            self._command_line = cl.__dict__
+        elif isinstance(cl, dict):
+            try:
+                self._command_line = MainConfig(**cl).__dict__
+            except Exception:
+                logger.error("MetricData validation error")
+                self._command_line = MainConfig(
+                    follow=False,
+                    thread_count=-1,
+                    overdrive_madness=False,
+                    compress=False,
+                    regions=["MainConfig validation error"],
+                    operating_systems=["MainConfig validation error"],
+                    get_operating_systems=False,
+                    get_regions=False,
+                    store_csv=False,
+                    store_db=False,
+                    v=-1,
+                    check_size=False,
+                    log_file="MainConfig validation error",
+                    csv_data_dir="MainConfig validation error",
+                ).__dict__
 
     def as_dict(self):
         return OrderedDict({
@@ -1052,34 +1114,6 @@ class MetricData:
         except Exception as e:
             logger.warning("Error saving metric data to file '{}': {}".format(filename, e))
             return False
-
-
-@dataclass
-class MainConfig:
-    """type hints"""
-    follow: bool
-    thread_count: int
-    overdrive_madness: bool
-    compress: bool
-    regions: List[str]
-    operating_systems: List[str]
-    get_operating_systems: bool
-    get_regions: bool
-    store_csv: bool
-    store_db: bool
-    v: int
-    check_size: bool
-    # hard-code candidates
-    log_file: str
-    csv_data_dir: str
-
-    def load(self):
-        raise NotImplementedError
-
-    def __repr__(self):
-        return f"""\
-            {__file__} {self.__dict__}
-        """
 
 
 def init_logging(verbosity: int, follow: bool, log_file: str | Path):
@@ -1176,33 +1210,6 @@ def main(args: MainConfig):  # noqa: C901
     else:
         csv_data_dir = None
 
-    # ??? should I add store_db and store_csv parameters here? Right now, the
-    # EC2DataCollector decides whether or not to store in db/csv by checking if
-    # the value is None.
-    #
-    # Upside: it would lead to less hashtag argparsing (wouldn't have to ask
-    # "are we storing to csv/db" as frequently)
-    # Downside: Every other subclass of DataCollector would require these
-    # parameters too, so it would make sense to move all of these parameters to
-    # the base DataCollectorConfig, even though the DataCollector base class
-    # would never use them... right? (ironically, it could use, right now,
-    # metric_data_file, which you removed from config in favor of hard-coding
-    # it...)
-    #
-    # TL:DR; csv_data_dir needs to be None here, but later on when calling
-    # get_data_dir_size, we need to know the csv_data_dir in order to check it.
-    #
-    # *I* think the problem is how I'm treating SCRPR_HOME. Shit's not
-    # temporary, it is in the user's XDG data home directory. *It will be
-    # there.*
-    # the MainConfig parameter csv_data_dir is for now assumed to be set from
-    # the command line.  When this is done, it is like overriding a
-    # configuration setting (even though MetricData().load() isn't implemented
-    # as it is for DatabaseConfig().), so, the result of the measurement would
-    # be moot. ...  Could the problem be the measurement itself?! ... no, we
-    # want to measure the size of the csv_data_dir. I think that is a good thing
-    # to do. Therefore I think the right thing to do is hardcode the path to the
-    # csv_data_dir, somewhere, for cases like this.
     config = EC2DataCollectorConfig(
         human_date=human_date,
         # csv_data_dir=args.csv_data_dir,
@@ -1374,6 +1381,6 @@ def main(args: MainConfig):  # noqa: C901
 
 if __name__ == '__main__':
     import sys
-    args = MainConfig(**do_args(sys.argv[1:]).__dict__)
-
+    cli_args = do_args(sys.argv[1:])
+    args = MainConfig(**cli_args.__dict__)
     raise SystemExit(main(args))

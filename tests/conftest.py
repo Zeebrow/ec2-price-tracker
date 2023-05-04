@@ -18,6 +18,24 @@ import scrpr
 TEST_CONFIG_FILE = '.env-test'
 TEST_TABLE_NAME = 'ec2_instance_pricing_test'
 
+@pytest.fixture
+def command_line():
+    return scrpr.MainConfig(
+        follow=False,
+        thread_count=-1,
+        overdrive_madness=False,
+        compress=False,
+        regions=["test"],
+        operating_systems=["test"],
+        get_operating_systems=False,
+        get_regions=False,
+        store_csv=False,
+        store_db=False,
+        v=-1,
+        check_size=False,
+        log_file="test",
+        csv_data_dir="test",
+    )
 
 def pytest_addoption(parser):
     parser.addoption(
@@ -104,6 +122,25 @@ def ec2_data_collector(request, ec2_data_collector_config):
     dc.driver.close()
     del dc
 
+@pytest.fixture
+def metrics_cmd_line():
+    """ew"""
+    return {
+        'follow': False,
+        'thread_count': 4,
+        'overdrive_madness': False,
+        'compress': True,
+        'regions': None,
+        'operating_systems': None,
+        'get_operating_systems': False,
+        'get_regions': False,
+        'store_csv': True,
+        'store_db': True,
+        'v': 1,
+        'check_size': False,
+        'log_file': '/some/log/file/full/path.log',
+        'csv_data_dir': '/some/csv/data/dir/full/path'
+    }
 
 @pytest.fixture
 def pg_dbconfig():
