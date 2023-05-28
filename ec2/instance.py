@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 # @@@ What is the point of having an 'Instance' type ?
+# Introducing SQLAlchemy! The last Python framework you'll ever need!
 class Instance(object):
     __slots__ = ("datestamp", "region", "operating_system", "instance_type", "cost_per_hr", "cpu_ct", "ram_size", "storage_type", "network_throughput")
 

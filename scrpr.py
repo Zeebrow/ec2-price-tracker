@@ -40,6 +40,7 @@ from selenium import webdriver
 import psycopg2
 from psycopg2.errors import UniqueViolation
 from psycopg2 import sql
+# import memory_profiler
 
 from ec2.instance import Instance, PGInstance
 
@@ -171,7 +172,6 @@ class EC2DataCollectorConfig(DataCollectorConfig):
 
 seconds_to_timer = lambda x: f"{floor(x/60)}m:{x%60:.1000f}s ({x} seconds)"  # noqa: E731
 
-
 class ThreadDivvier:
     """
     Converts machine time processing data into developer time debugging exceptions.
@@ -209,6 +209,7 @@ class ThreadDivvier:
         # start init for each driver
         logger.debug("initializing {} drivers".format(self.thread_count))
         threads = []
+        # logger.critical(f"\033[44mBefore threads init: {psutil.Process().memory_full_info()=}\033[0m")
         for _ in range(self.thread_count):
             logger.debug("initializing new driver with id '{}'".format(next_id))
             # before = psutil.Process().memory_info().rss
@@ -233,12 +234,14 @@ class ThreadDivvier:
         # i.e. when __init__ has finished
         while len(self.drivers) != self.thread_count:
             pass
+        # logger.critical(f"\033[44mAfter threads init: {psutil.Process().memory_full_info()=}\033[0m")
         for t in threads:
             t.join()
         logger.debug("Finished initializing {} scrapers".format(len(self.drivers)))
 
         return
 
+    # @memory_profiler.profile
     def run_threads(self, arg_queue: List[tuple]):
         """
         Takes a list of tuples (operating_system, region) and gathers corresponding EC2 instance pricing data.
@@ -1149,6 +1152,7 @@ def get_date():
     return datetime.datetime.now()
 
 
+# @memory_profiler.profile
 def main(args: MainConfig):  # noqa: C901
     main_process = psutil.Process()  # noqa: F841
 
@@ -1180,17 +1184,17 @@ def main(args: MainConfig):  # noqa: C901
             db_config = DatabaseConfig()
             db_config.load()
             s_db = get_table_size(db_config)
+            print("database:")
+            print("{:.2f} MB".format(s_db / 1024 / 1024))
         except Exception as e:
             print(e)
+        print()
         try:
             s_csv = get_data_dir_size()
+            print("csv data:")
+            print("{:.2f} MB".format(s_csv / 1024 / 1024))
         except Exception as e:
             print(e)
-        print("database:")
-        print("{:.2f} MB".format(s_db / 1024 / 1024))
-        print()
-        print("csv data:")
-        print("{:.2f} MB".format(s_csv / 1024 / 1024))
         raise SystemExit(0)
 
     # argparsing
@@ -1306,6 +1310,9 @@ def main(args: MainConfig):  # noqa: C901
     thread_thing = ThreadDivvier(thread_count=num_threads)
     # logger.critical(f"\033[44mmem before init_scrapers: {main_process.memory_info().rss}\033[0m")
     thread_thing.init_scrapers_of(config=config)
+    #@@@
+    #memory_profiler.memory_usage((thread_thing.init_scrapers_of, (config,), {}))
+    
     # logger.critical(f"\033[44mmem after init_scrapers: {main_process.memory_info().rss}\033[0m")
     t_prog_init = time.time() - t_main
     metric_data.t_init = t_prog_init

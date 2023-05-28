@@ -5,10 +5,12 @@ from psycopg2 import sql
 import dotenv
 import datetime
 from collections import defaultdict
-from datetime import date, timedelta
 from math import floor
+import json
 
-from scrpr import DatabaseConfig, get_table_size, get_data_dir_size, DEFAULT_CSV_DATA_DIR, get_date_as_datetime
+# from sqlalchemy import create_engine
+
+from scrpr import DatabaseConfig, get_table_size, get_data_dir_size, DEFAULT_CSV_DATA_DIR, get_date, MetricData
 
 
 ##############################
@@ -75,21 +77,78 @@ def display_for_threadcount(t):
         _print_row(row)
     return 0
 
+def _as_json(with_command_line=True):
+    """need to update db with proper json strings, without single quotes"""
+    cur = conn.cursor()
+    query = sql.SQL("SELECT * FROM {} where date == '2023-05-02' ORDER BY threads ASC".format(table_name))
+    cur.execute(query)
+    r = cur.fetchall()
+    print(r)
+    
+    for row in r:
+        cli = json.loads(row[10]),
+        yield {
+            "run_no": row[0],
+            "date": row[1],
+            "threads": row[2],
+            "oses": row[3],
+            "regions": row[4],
+            "t_init": row[5],
+            "t_run": row[6],
+            "s_csv": row[7],
+            "s_db": row[8],
+            "reported_errors": row[9],
+            "command_line": cli,
+        }
+
+
+def get_table_sizes(pprint=False):
+    """
+    returns [(table_name, table_size)]
+    """
+    tables = [
+        'ec2_thread_times',
+        'ec2_instance_types',
+        'ec2_instance_pricing',
+        'metric_data',
+        'network_throughputs',
+        'storage_types',
+    ]
+    if pprint:
+        q = "pg_size_pretty(pg_total_relation_size('public.'||a.table_name))"
+    else:
+        q = "pg_total_relation_size('public.'||a.table_name)"
+    cur = conn.cursor()
+    query = sql.SQL("""
+        SELECT table_name, {} FROM (    
+            SELECT table_name    
+            FROM information_schema.tables                                                          
+            WHERE table_schema = 'public'                                                           
+            ORDER BY table_name ASC                                                                 
+        )a""".format(q))
+    cur.execute(query)
+    r = cur.fetchall()
+    for row in r:
+        yield row
+
 
 def all_threads_counts():
     """
     -t
     report performance statistics
     """
-    cur = conn.cursor()
-    query = sql.SQL("SELECT threads, t_run FROM {} where date != '1999-12-31' ORDER BY threads ASC".format(table_name))
-    cur.execute(query)
-    r = cur.fetchall()
+    # js = _as_json()
+    # for j in js:
+    #     json.dumps(j, indent=1)
+    # exit()
     threads = defaultdict(int)
     # build map of # of threads in run -> num of times run w/ key thread count
+    query = sql.SQL("SELECT threads, t_run FROM {} where date != '1999-12-31' ORDER BY threads ASC".format(table_name))
+    cur = conn.cursor()
+    cur.execute(query)
+    r = cur.fetchall()
     for n in r:
         threads[n[0]] += 1
-    # sorts by number of threads
 
     thread_time_sums = defaultdict(int)
     runs_per_thread = defaultdict(int)
@@ -104,9 +163,24 @@ def all_threads_counts():
     for thread_count, num_thread_runs in threads.items():
         print("{}\t\t{}\t\t{:.2f}".format(thread_count, num_thread_runs, thread_time_sums[thread_count] / threads[thread_count]))
 
-    print("-----------------------------------")
+    print("------------------------------------------")
     print("total number of runs: {}".format(total_num_runs))
     print("avg. threads per run: {:.2f}".format(total_num_threads_run / total_num_runs))
+
+
+def print_table_sizes():
+    _longest = 0
+    _longest_row = None
+    for row in get_table_sizes():
+        if len(row[0]) > _longest:
+            _longest_row = row[0]
+            _longest = len(row[0])
+    _longest = _longest + 4  # padding
+    print("{}{}".format("table".ljust(_longest, ' '), "size"))
+    print("-" * _longest * 2)
+    for row in get_table_sizes(pprint=True):
+        print("{}{}".format(row[0].ljust(_longest, ' '), row[1]))
+
 
 
 def _print_header():
@@ -115,6 +189,7 @@ def _print_header():
 
 
 def _print_row(row):
+    """without command_line (11th field)"""
     print("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}".format(
         str(row[0]).center(8),  # run_no
         str(row[1]).center(12),  # date
@@ -130,9 +205,13 @@ def _print_row(row):
 
 
 def report_change_on(dt=None, region='us-east-1', operating_system='Linux'):
-    delta = timedelta(days=1)
+    """
+    Compare change in instance pricing between last run and today
+    TODO: threadable
+    """
+    delta = datetime.timedelta(days=1)
     if dt is None:
-        dt = get_date_as_datetime()
+        dt = get_date()
 
     begin_at = dt - delta
     end_at = dt
@@ -192,8 +271,12 @@ def do_args(command_line: list):
         return 0
 
     if args.sizes:
-        print("tables:\t\t{:.2f} MB".format(get_table_size(db_config=config) / 1024 / 1024))
-        print("CSVs:\t\t{:.2f} MB".format(get_data_dir_size() / 1024 / 1024))
+        print()
+        print("CSVs:\t\t\t{:.2f} MB".format(get_data_dir_size() / 1024 / 1024))
+        print()
+        print_table_sizes()
+        print('------------------------------------------------')
+        print("total:\t\t\t{:.2f} MB".format(get_table_size(db_config=config) / 1024 / 1024))
         return 0
 
     if args.report:
@@ -224,4 +307,6 @@ def do_args(command_line: list):
 if __name__ == '__main__':
     # import click
     # import click
+    #_teeeest()
+    #exit()
     raise SystemExit(do_args(sys.argv))
