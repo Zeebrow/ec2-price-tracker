@@ -172,6 +172,7 @@ class EC2DataCollectorConfig(DataCollectorConfig):
 
 seconds_to_timer = lambda x: f"{floor(x/60)}m:{x%60:.1000f}s ({x} seconds)"  # noqa: E731
 
+
 class ThreadDivvier:
     """
     Converts machine time processing data into developer time debugging exceptions.
@@ -1019,6 +1020,7 @@ class MainConfig:
             {__file__} {self.__dict__}
         """
 
+
 @dataclass
 class MetricData:
     """
@@ -1310,9 +1312,9 @@ def main(args: MainConfig):  # noqa: C901
     thread_thing = ThreadDivvier(thread_count=num_threads)
     # logger.critical(f"\033[44mmem before init_scrapers: {main_process.memory_info().rss}\033[0m")
     thread_thing.init_scrapers_of(config=config)
-    #@@@
-    #memory_profiler.memory_usage((thread_thing.init_scrapers_of, (config,), {}))
-    
+    # @@@
+    # memory_profiler.memory_usage((thread_thing.init_scrapers_of, (config,), {}))
+
     # logger.critical(f"\033[44mmem after init_scrapers: {main_process.memory_info().rss}\033[0m")
     t_prog_init = time.time() - t_main
     metric_data.t_init = t_prog_init

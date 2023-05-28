@@ -77,6 +77,7 @@ def display_for_threadcount(t):
         _print_row(row)
     return 0
 
+
 def _as_json(with_command_line=True):
     """need to update db with proper json strings, without single quotes"""
     cur = conn.cursor()
@@ -84,7 +85,7 @@ def _as_json(with_command_line=True):
     cur.execute(query)
     r = cur.fetchall()
     print(r)
-    
+
     for row in r:
         cli = json.loads(row[10]),
         yield {
@@ -106,25 +107,25 @@ def get_table_sizes(pprint=False):
     """
     returns [(table_name, table_size)]
     """
-    tables = [
-        'ec2_thread_times',
-        'ec2_instance_types',
-        'ec2_instance_pricing',
-        'metric_data',
-        'network_throughputs',
-        'storage_types',
-    ]
+#    tables = [
+#        'ec2_thread_times',
+#        'ec2_instance_types',
+#        'ec2_instance_pricing',
+#        'metric_data',
+#        'network_throughputs',
+#        'storage_types',
+#    ]
     if pprint:
         q = "pg_size_pretty(pg_total_relation_size('public.'||a.table_name))"
     else:
         q = "pg_total_relation_size('public.'||a.table_name)"
     cur = conn.cursor()
     query = sql.SQL("""
-        SELECT table_name, {} FROM (    
-            SELECT table_name    
-            FROM information_schema.tables                                                          
-            WHERE table_schema = 'public'                                                           
-            ORDER BY table_name ASC                                                                 
+        SELECT table_name, {} FROM (
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+            ORDER BY table_name ASC
         )a""".format(q))
     cur.execute(query)
     r = cur.fetchall()
@@ -170,17 +171,14 @@ def all_threads_counts():
 
 def print_table_sizes():
     _longest = 0
-    _longest_row = None
     for row in get_table_sizes():
         if len(row[0]) > _longest:
-            _longest_row = row[0]
             _longest = len(row[0])
     _longest = _longest + 4  # padding
     print("{}{}".format("table".ljust(_longest, ' '), "size"))
     print("-" * _longest * 2)
     for row in get_table_sizes(pprint=True):
         print("{}{}".format(row[0].ljust(_longest, ' '), row[1]))
-
 
 
 def _print_header():
@@ -305,8 +303,4 @@ def do_args(command_line: list):
 # Main
 ##############################
 if __name__ == '__main__':
-    # import click
-    # import click
-    #_teeeest()
-    #exit()
     raise SystemExit(do_args(sys.argv))

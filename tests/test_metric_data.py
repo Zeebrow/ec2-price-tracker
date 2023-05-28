@@ -26,6 +26,7 @@ def test_metric_data_stores(db, pg_dbconfig, command_line):
     )
     assert len(curr.fetchall()) == 2
 
+
 def test_command_line_deserializes_to_dict(db, pg_dbconfig, command_line):
     md = scrpr.MetricData('1999-12-31')
     md.command_line = command_line
