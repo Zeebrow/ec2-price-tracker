@@ -20,10 +20,12 @@ from scrpr import DatabaseConfig, get_table_size, get_data_dir_size, DEFAULT_CSV
 table_name = 'metric_data'
 ec2_pricing_table = 'ec2_instance_pricing'
 
+
 def get_config(env_file=".env"):
     config = DatabaseConfig()
     config.load(env_file=env_file)
     return config
+
 
 def get_conn(env_file=".env"):
     config = get_config(env_file=env_file)
