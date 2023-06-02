@@ -19,10 +19,16 @@ from scrpr import DatabaseConfig, get_table_size, get_data_dir_size, DEFAULT_CSV
 
 table_name = 'metric_data'
 ec2_pricing_table = 'ec2_instance_pricing'
-config = DatabaseConfig()
-config.load()
 
-conn = psycopg2.connect(config.get_dsl())
+def get_config(env_file=".env"):
+    config = DatabaseConfig()
+    config.load(env_file=env_file)
+    return config
+
+def get_conn(env_file=".env"):
+    config = get_config(env_file=env_file)
+    conn = psycopg2.connect(config.get_dsl())
+    return conn
 
 # columns
 #  run_no |    date    | threads | oses | regions |       t_init       |       t_run        |  s_csv   |   s_db    | reported_errors | command_line
@@ -36,9 +42,10 @@ def weight(threads, oses, regions, t_run):
     return round(t_run / (oses * regions * threads), 3)
 
 
-def sortish():
+def sortish(env_file=".env"):
     query = sql.SQL("SELECT * FROM {} ".format(table_name))
 
+    conn = get_conn(env_file)
     cur = conn.cursor()
     cur.execute(query)
     r = cur.fetchall()
@@ -54,8 +61,9 @@ def sortish():
         print("{}\t{}\t{}\t{}\t{}\t{}".format(n[0], n[1], n[2], n[3], n[4], n[5],))
 
 
-def did_i_run_this_tday():
+def did_i_run_this_tday(env_file=".env"):
     query = sql.SQL("SELECT * FROM {} where date = '{}'".format(table_name, datetime.datetime.now().strftime("%Y-%m-%d")))
+    conn = get_conn(env_file)
     cur = conn.cursor()
     cur.execute(query)
     r = cur.fetchall()
@@ -67,7 +75,8 @@ def did_i_run_this_tday():
         return 0
 
 
-def display_for_threadcount(t):
+def display_for_threadcount(t, env_file=".env"):
+    conn = get_conn(env_file)
     cur = conn.cursor()
     query = sql.SQL("SELECT * FROM {} where threads = {} and date != '1999-12-31'".format(table_name, t))
     cur.execute(query)
@@ -78,8 +87,9 @@ def display_for_threadcount(t):
     return 0
 
 
-def _as_json(with_command_line=True):
+def _as_json(with_command_line=True, env_file=".env"):
     """need to update db with proper json strings, without single quotes"""
+    conn = get_conn(env_file)
     cur = conn.cursor()
     query = sql.SQL("SELECT * FROM {} where date == '2023-05-02' ORDER BY threads ASC".format(table_name))
     cur.execute(query)
@@ -103,7 +113,7 @@ def _as_json(with_command_line=True):
         }
 
 
-def get_table_sizes(pprint=False):
+def get_table_sizes(pprint=False, env_file=".env"):
     """
     returns [(table_name, table_size)]
     """
@@ -119,6 +129,7 @@ def get_table_sizes(pprint=False):
         q = "pg_size_pretty(pg_total_relation_size('public.'||a.table_name))"
     else:
         q = "pg_total_relation_size('public.'||a.table_name)"
+    conn = get_conn(env_file)
     cur = conn.cursor()
     query = sql.SQL("""
         SELECT table_name, {} FROM (
@@ -133,7 +144,7 @@ def get_table_sizes(pprint=False):
         yield row
 
 
-def all_threads_counts():
+def all_threads_counts(env_file=".env"):
     """
     -t
     report performance statistics
@@ -145,6 +156,7 @@ def all_threads_counts():
     threads = defaultdict(int)
     # build map of # of threads in run -> num of times run w/ key thread count
     query = sql.SQL("SELECT threads, t_run FROM {} where date != '1999-12-31' ORDER BY threads ASC".format(table_name))
+    conn = get_conn(env_file)
     cur = conn.cursor()
     cur.execute(query)
     r = cur.fetchall()
@@ -202,7 +214,7 @@ def _print_row(row):
     ))
 
 
-def report_change_on(dt=None, region='us-east-1', operating_system='Linux'):
+def report_change_on(dt=None, region='us-east-1', operating_system='Linux', env_file=".env"):
     """
     Compare change in instance pricing between last run and today
     TODO: threadable
@@ -214,6 +226,7 @@ def report_change_on(dt=None, region='us-east-1', operating_system='Linux'):
     begin_at = dt - delta
     end_at = dt
 
+    conn = get_conn(env_file)
     cur = conn.cursor()
     query = sql.SQL(f"""
         SELECT * FROM (
@@ -253,19 +266,20 @@ def do_args(command_line: list):
     grp.add_argument("--sizes", "-z", required=False, action='store_true', help="figure out how much space the compressed CSVs and these awful schemas are currently using")
     grp.add_argument("--report", "-r", required=False, action='store_true', help="show something GOOD, yo")
     grp.add_argument("--by-thread", required=False, action='store', help="show stats for a specific threadcount")
+    parser.add_argument("-f", "--env-file", required=False, action='store', help="path to database credential env file")
 
     args, _ = parser.parse_known_args(cli_args)
 
     if args.threads_count:
-        all_threads_counts()
+        all_threads_counts(env_file=args.env_file)
         return 0
 
     if args.did_i_run_this:
-        did_i_run_this_tday()
+        did_i_run_this_tday(env_file=args.env_file)
         return 0
 
     if args.sortish:
-        sortish()
+        sortish(env_file=args.env_file)
         return 0
 
     if args.sizes:
@@ -274,7 +288,7 @@ def do_args(command_line: list):
         print()
         print_table_sizes()
         print('------------------------------------------------')
-        print("total:\t\t\t{:.2f} MB".format(get_table_size(db_config=config) / 1024 / 1024))
+        print("total:\t\t\t{:.2f} MB".format(get_table_size(db_config=get_config(args.env_file)) / 1024 / 1024))
         return 0
 
     if args.report:
@@ -290,13 +304,13 @@ def do_args(command_line: list):
             'eu-west-1'
             'eu-west-2'
         ]:
-            report_change_on(region=region)
+            report_change_on(region=region, env_file=args.env_file)
         return 0
 
     if args.by_thread:
-        display_for_threadcount(args.by_thread)
+        display_for_threadcount(args.by_thread, env_file=args.env_file)
 
-    raise SystemExit(did_i_run_this_tday())
+    raise SystemExit(did_i_run_this_tday(env_file=args.env_file))
 
 
 ##############################
