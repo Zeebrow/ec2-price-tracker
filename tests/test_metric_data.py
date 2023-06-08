@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-import scrpr
+from scrpr import scrpr
 
 
 def test_metric_data_requires_dates():

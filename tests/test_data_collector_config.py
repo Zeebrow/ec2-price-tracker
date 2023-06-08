@@ -1,7 +1,7 @@
 import psycopg2
 import pytest
 
-import scrpr
+from scrpr import scrpr
 
 
 def test_postgres_config_sets_from_dotenv(fake_pg_config):

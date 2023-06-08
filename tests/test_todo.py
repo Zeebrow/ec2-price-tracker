@@ -3,7 +3,7 @@ from multiprocessing import cpu_count
 
 import pytest
 
-import scrpr
+from scrpr import scrpr
 
 
 def test_get_data_dir_size(fake_csv_dir_tree):

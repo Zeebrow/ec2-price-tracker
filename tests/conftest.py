@@ -9,8 +9,7 @@ from pathlib import Path
 import pytest
 import dotenv
 
-from ec2.instance import PGInstance
-import scrpr
+from scrpr import scrpr
 # from scrpr import DataCollector, DataCollectorConfig, DatabaseConfig
 
 

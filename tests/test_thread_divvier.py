@@ -10,7 +10,7 @@ from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.common import action_chains
 from selenium import webdriver
 
-import scrpr
+from scrpr import scrpr
 
 
 mock_ec2_datacollector = MagicMock(spec=scrpr.EC2DataCollector)

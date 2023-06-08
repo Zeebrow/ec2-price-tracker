@@ -6,7 +6,7 @@ import datetime
 from collections import defaultdict
 import json
 
-from scrpr import DatabaseConfig, get_table_size, get_data_dir_size, DEFAULT_CSV_DATA_DIR, get_date, MetricData
+from scrpr.scrpr import DatabaseConfig, get_table_size, get_data_dir_size, DEFAULT_CSV_DATA_DIR, get_date, MetricData
 
 
 ##############################

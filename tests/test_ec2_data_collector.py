@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-import scrpr
+from scrpr import scrpr
 
 
 def test_test_datacollector_has_no_driver_attribute(ec2_driverless_dc):

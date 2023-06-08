@@ -4,6 +4,12 @@ Use a headless Chrome browser to gather EC2 price info: <https://aws.amazon.com/
 
 Postres was chosen because `psycopg2` is fully thread-safe.
 
+# usage
+
+```
+python3 -m scrpr -t 2 --follow
+```
+
 # data
 
 Stores data in a Postgres schema, but also in flat CSV files.

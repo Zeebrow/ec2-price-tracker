@@ -42,7 +42,7 @@ from psycopg2.errors import UniqueViolation
 from psycopg2 import sql
 # import memory_profiler
 
-from ec2.instance import Instance, PGInstance
+from .instance import Instance, PGInstance
 
 
 """

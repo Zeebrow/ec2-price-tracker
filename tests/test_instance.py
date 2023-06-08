@@ -1,4 +1,4 @@
-from ec2.instance import PGInstance
+from scrpr.instance import PGInstance
 
 
 def test_pginstance_repr():
