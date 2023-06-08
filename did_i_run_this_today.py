@@ -2,13 +2,9 @@ import argparse
 import sys
 import psycopg2
 from psycopg2 import sql
-import dotenv
 import datetime
 from collections import defaultdict
-from math import floor
 import json
-
-# from sqlalchemy import create_engine
 
 from scrpr import DatabaseConfig, get_table_size, get_data_dir_size, DEFAULT_CSV_DATA_DIR, get_date, MetricData
 
@@ -32,8 +28,6 @@ def get_conn(env_file=".env"):
     conn = psycopg2.connect(config.get_dsl())
     return conn
 
-# columns
-#  run_no |    date    | threads | oses | regions |       t_init       |       t_run        |  s_csv   |   s_db    | reported_errors | command_line
 
 ##############################
 # Functions
@@ -146,17 +140,15 @@ def get_table_sizes(pprint=False, env_file=".env"):
         yield row
 
 
-def all_threads_counts(env_file=".env"):
+def runtime_averages(env_file=".env"):
     """
     -t
     report performance statistics
     """
-    # js = _as_json()
-    # for j in js:
-    #     json.dumps(j, indent=1)
-    # exit()
     threads = defaultdict(int)
     # build map of # of threads in run -> num of times run w/ key thread count
+    # columns
+    #  run_no |    date    | threads | oses | regions |       t_init       |       t_run        |  s_csv   |   s_db    | reported_errors | command_line
     query = sql.SQL("SELECT threads, t_run FROM {} where date != '1999-12-31' ORDER BY threads ASC".format(table_name))
     conn = get_conn(env_file)
     cur = conn.cursor()
@@ -273,7 +265,7 @@ def do_args(command_line: list):
     args, _ = parser.parse_known_args(cli_args)
 
     if args.threads_count:
-        all_threads_counts(env_file=args.env_file)
+        runtime_averages(env_file=args.env_file)
         return 0
 
     if args.did_i_run_this:
@@ -295,16 +287,35 @@ def do_args(command_line: list):
 
     if args.report:
         for region in [
-            'us-east-1',
-            'us-east-2',
-            'us-west-1',
-            'us-west-2',
-            'ap-southeast-1',
-            'ap-southeast-2',
-            'ap-southeast-3',
-            'ap-southeast-4',
-            'eu-west-1'
-            'eu-west-2'
+                'us-east-1',
+                'us-east-2',
+                'us-west-1',
+                'us-west-2',
+                'ca-central-1',
+                'us-gov-east-1',
+                'us-gov-west-1',
+                'af-south-1',
+                'ap-east-1',
+                'ap-south-2',
+                'ap-southeast-3',
+                'ap-southeast-4',
+                'ap-south-1',
+                'ap-northeast-3',
+                'ap-northeast-2',
+                'ap-southeast-1',
+                'ap-southeast-2',
+                'ap-northeast-1',
+                'eu-central-1',
+                'eu-west-1',
+                'eu-west-2',
+                'eu-south-1',
+                'eu-west-3',
+                'eu-south-2',
+                'eu-north-1',
+                'eu-central-2',
+                'me-south-1',
+                'me-central-1',
+                'sa-east-1'
         ]:
             report_change_on(region=region, env_file=args.env_file)
         return 0
