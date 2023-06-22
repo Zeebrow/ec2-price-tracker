@@ -18,7 +18,7 @@ python3 -m scrpr -t 2 --follow
 python3 -m venv venv-api
 . venv-api/bin/activate
 pip install -r api/requirements.txt
-uvicorn api.main:app --reload
+uvicorn scrpr.api.main:app --reload
 ```
 
 # data
