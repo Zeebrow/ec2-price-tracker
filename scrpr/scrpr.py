@@ -55,6 +55,7 @@ SCRPR_HOME = os.path.join(os.path.expanduser('~'), '.local', 'share', 'scrpr')
 # this is overridable with the flag --csv-data-dir
 DEFAULT_CSV_DATA_DIR = os.path.join(SCRPR_HOME, "csv-data")
 DEFAULT_METRICS_DATA_FILE = os.path.join(SCRPR_HOME, "metric-data.txt")
+DEFAULT_LOG_FILE = os.path.join(SCRPR_HOME, "logs", "scrpr.log")
 _THREAD_RUN_TIMES = []
 
 ####################### memory stuf
@@ -872,7 +873,7 @@ def do_args(sys_args):
         help="print logs to stdout in addition to the log file")
     parser.add_argument("--log-file",
         required=False,
-        default=os.path.join(SCRPR_HOME, "logs", 'scrpr.log'),
+        default=DEFAULT_LOG_FILE,
         help="log output destination file. '--log-file=console' will instead print to your system's stderr stream.")
     parser.add_argument("-t", "--thread-count",
         default=cpu_count(),
@@ -1014,8 +1015,8 @@ class MainConfig:
     store_db: bool
     v: int
     check_size: bool
-    log_file: str
-    csv_data_dir: str
+    log_file: str = DEFAULT_LOG_FILE
+    csv_data_dir: str = DEFAULT_CSV_DATA_DIR
 
     def load(self):
         raise NotImplementedError
@@ -1126,11 +1127,13 @@ class MetricData:
             return False
 
 
-def init_logging(verbosity: int, follow: bool, log_file: str | Path):
+def init_logging(verbosity: int, follow: bool, log_file: str | Path | None):
     logger = logging.getLogger()
     logging.getLogger('selenium.*').setLevel(logging.WARNING)
     logging.getLogger('selenium.webdriver.remote.remote_connection').setLevel(logging.WARNING)
     logging.getLogger('urllib3').setLevel(logging.WARNING)
+    if log_file is None:
+        log_file = DEFAULT_LOG_FILE
     if verbosity == 0:
         logger.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(message)s')
@@ -1219,7 +1222,7 @@ def main(args: MainConfig):  # noqa: C901
     if args.store_csv:
         csv_data_dir = args.csv_data_dir
     else:
-        csv_data_dir = None
+        csv_data_dir = DEFAULT_CSV_DATA_DIR
 
     config = EC2DataCollectorConfig(
         human_date=human_date,
@@ -1229,16 +1232,16 @@ def main(args: MainConfig):  # noqa: C901
     )
 
     for arg, val in vars(args).items():
-        logger.debug("{}={}".format(arg, val))
+        logger.debug("{}={} ({})".format(arg, val, type(val)))
     for k, v in config.__dict__.items():
-        logger.debug("{}={}".format(k, v))
+        logger.debug("{}={} ({})".format(k, v, type(val)))
     logger.debug("{}".format(str(db_config)))
 
     # argparsing
     if args.store_db:
         s_db_start = get_table_size(db_config)
     if args.store_csv:
-        s_csv_start = get_data_dir_size(config.csv_data_dir)
+        s_csv_start = get_data_dir_size(csv_data_dir)
 
     ##########################################################################
     # regions and operating systems
@@ -1334,11 +1337,11 @@ def main(args: MainConfig):  # noqa: C901
     ##########################################################################
     # argparsing
     if args.compress and csv_data_dir:
-        compress_data(config.csv_data_dir, 'ec2', human_date, rm_tree=True)
+        compress_data(csv_data_dir, 'ec2', human_date, rm_tree=True)
 
     # argparsing
     if args.store_csv:
-        metric_data.s_csv = get_data_dir_size(config.csv_data_dir) - s_csv_start
+        metric_data.s_csv = get_data_dir_size(csv_data_dir) - s_csv_start
 
     # argparsing
     if args.store_db:
@@ -1355,8 +1358,8 @@ def main(args: MainConfig):  # noqa: C901
     # ?? is it safe to assume db_config will always be available?? I mean, what if that assumption is made, and one day, its *not*?
     if db_config:
         logger.debug("db total size:\t{:.2f}M".format(get_table_size(db_config) / 1024 / 1024))
-    logger.debug("csv total size:\t{:.2f}M".format(get_data_dir_size(DEFAULT_CSV_DATA_DIR) / 1024 / 1024))
-    logging.debug("Saving run's metric data to '{}'".format(DEFAULT_METRICS_DATA_FILE))
+    logger.debug("csv total size:\t{:.2f}M".format(get_data_dir_size(csv_data_dir) / 1024 / 1024))
+    logger.debug("Saving run's metric data to '{}'".format(DEFAULT_METRICS_DATA_FILE))
     metric_data.store(db_config)
     logger.info("Program finished with {} errors in {}".format(len(ERRORS), seconds_to_timer(metric_data.t_run)))
     logger.debug('---------------------------------------------------')

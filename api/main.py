@@ -126,24 +126,6 @@ async def read_metrics(
 
 @app.post("/run/", response_model=schemas.CommandLine)
 async def run_scrpr(run_args: schemas.CommandLine):
-# input:
-#     {
-#   "run_no": 0,
-#   "follow": true,
-#   "thread_count": 0,
-#   "overdrive_madness": true,
-#   "compress": true,
-#   "regions": "string",
-#   "operating_systems": "string",
-#   "get_operating_systems": true,
-#   "get_regions": true,
-#   "store_csv": true,
-#   "store_db": true,
-#   "v": 0,
-#   "check_size": true,
-#   "log_file": "string",
-#   "csv_data_dir": "string"
-# }
     # put lock in db
     # run
     de = dotenv.dotenv_values(".env-test")  # note probably from the directory you started uvicorn
@@ -153,18 +135,30 @@ async def run_scrpr(run_args: schemas.CommandLine):
     # print(f"{script_path=}")
     # print("api: running with args:")
     # print(run_args.json())
-    result = subprocess.run(
-        [interpreter, script_path, run_args.json()],
-        capture_output=True,
-        encoding='utf_8'
-    )
-    print(f"{result=}")
-    print("stderr:")
-    for line in result.stdout.split("\n"):
-        print(line)
-    print("stderr:")
-    for line in result.stderr.split("\n"):
-        print(line)
-    # remove lock
+    if run_args.regions is not None:
+        run_args.regions = ",".join(run_args.regions)
+    if run_args.operating_systems is not None:
+        run_args.operating_systems = ",".join(run_args.operating_systems)
+    print(json.dumps(run_args.dict(), indent=2))
+    print(run_args)
+    print(run_args.json())
+    print(run_args.dict())
 
-    return run_args
+    api_run_arg_dict = json.dumps(run_args.dict())
+    subprocess.Popen(
+        [interpreter, script_path, api_run_arg_dict],
+    )
+    # result = subprocess.run(
+    #     [interpreter, script_path, run_args.json()],
+    #     capture_output=True,
+    #     encoding='utf_8'
+    # )
+    # print(f"{result=}")
+    # print("stderr:")
+    # for line in result.stdout.split("\n"):
+    #     print(line)
+    # print("stderr:")
+    # for line in result.stderr.split("\n"):
+    #     print(line)
+
+    return run_args.json()
