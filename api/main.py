@@ -1,11 +1,13 @@
 import json
 from datetime import date
 from typing import Union
+import subprocess
 
 from fastapi import FastAPI, Depends, HTTPException, Response, status, Request
 from sqlalchemy.orm import Session
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+import dotenv
 
 from .sql_app import crud, models, schemas
 from .sql_app.database import SessionLocal, engine
@@ -122,30 +124,47 @@ async def read_metrics(
     ):
     return crud.get_instance_pricing(instance_type, region, os, from_date, to_date, db)
 
-@app.get("/pricediff/", status_code=200, response_model=list[tuple[schemas.Instance, schemas.Instance]])
-async def read_metrics(
-        response: Response,
-        # instance_types: str | None = None,
-        # oses: str | None = None,
-        # regions: str | None = None,
-        # all: bool = False,
-        db: Session = Depends(get_db)
-    ):
-    # if (not instance_types and not oses and not regions) and not all:
-    #     return {"error": "you must specify 'all=true' as a query parameter in order to search through each instance type, os, and region."}
+@app.post("/run/", response_model=schemas.CommandLine)
+async def run_scrpr(run_args: schemas.CommandLine):
+# input:
+#     {
+#   "run_no": 0,
+#   "follow": true,
+#   "thread_count": 0,
+#   "overdrive_madness": true,
+#   "compress": true,
+#   "regions": "string",
+#   "operating_systems": "string",
+#   "get_operating_systems": true,
+#   "get_regions": true,
+#   "store_csv": true,
+#   "store_db": true,
+#   "v": 0,
+#   "check_size": true,
+#   "log_file": "string",
+#   "csv_data_dir": "string"
+# }
+    # put lock in db
+    # run
+    de = dotenv.dotenv_values(".env-test")  # note probably from the directory you started uvicorn
+    interpreter = de.get('python3_executable')
+    script_path = de.get('api_run_script')
+    # print(f"{interpreter=}")
+    # print(f"{script_path=}")
+    # print("api: running with args:")
+    # print(run_args.json())
+    result = subprocess.run(
+        [interpreter, script_path, run_args.json()],
+        capture_output=True,
+        encoding='utf_8'
+    )
+    print(f"{result=}")
+    print("stderr:")
+    for line in result.stdout.split("\n"):
+        print(line)
+    print("stderr:")
+    for line in result.stderr.split("\n"):
+        print(line)
+    # remove lock
 
-    # if not regions:
-    #     _regions = None
-    # else:
-    #     _regions = regions.split(",")
-    # if not oses:
-    #     _oses = None
-    # else:
-    #     _oses = oses.split(",")
-    # if not instance_types:
-    #     _instance_types = None
-    # else:
-    #     _instance_types = instance_types.split(",")
-    # return crud.get_instance_pricing_diffs(_instance_types, _oses, _regions, db)
-    return crud.get_instance_pricing_diffs(db)
-    # return crud.get_instance_pricing_diffs_ooo_pretty_fancy(_instance_types, _oses, _regions, db)
+    return run_args

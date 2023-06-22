@@ -1,6 +1,7 @@
 import json
 from enum import Enum
 from datetime import date
+from typing import List
 
 from pydantic import BaseModel
 
@@ -22,13 +23,12 @@ class Instance(BaseModel):
 
 
 class CommandLine(BaseModel):
-    run_no: int
     follow: bool
     thread_count: int
     overdrive_madness: bool
     compress: bool
-    regions: str
-    operating_systems: str
+    regions: str | None
+    operating_systems: str | None
     get_operating_systems: bool
     get_regions: bool
     store_csv: bool

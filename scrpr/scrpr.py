@@ -933,6 +933,11 @@ def do_args(sys_args):
         action='store_true',
         help='return the current size of the database and csv directory, then exit.')
 
+    # parser.add_argument("-h", "--help",
+    #     required=False,
+    #     action='store_true',
+    #     help='print help and exit.')
+
     args = parser.parse_args(sys_args)
 
     # return MainConfig(args)

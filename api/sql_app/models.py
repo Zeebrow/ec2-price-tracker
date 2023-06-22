@@ -51,11 +51,10 @@ class Metric(Base):
     s_csv = Column(Integer)
     s_db = Column(Integer)
     reported_errors = Column(Integer)
-#
-#class Run(Base):
-#    __tablename__ = "runs"
-#    run_id = Column(Integer, primary_key=True, index=True)
-#    run_no = Column(Integer)
-#    date = Column(Date)
-#    succeeded = Column(Boolean)
-#
+
+class Run(Base):
+    __tablename__ = "runs"
+    run_id = Column(Integer, primary_key=True, index=True)
+    run_no = Column(Integer)
+    datetime = Column(Date)
+    succeeded = Column(Boolean)
