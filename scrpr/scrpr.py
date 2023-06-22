@@ -29,6 +29,7 @@ import dotenv
 from collections import OrderedDict
 import psutil
 import json
+import atexit
 
 from selenium.webdriver.common.by import By
 # from selenium.webdriver.firefox.service import Service
@@ -43,12 +44,14 @@ from psycopg2 import sql
 # import memory_profiler
 
 from .instance import Instance, PGInstance
+from .api.sql_app import crud, database
+
+logger = logging.getLogger(__name__)
 
 
 """
 Scrapes pricing information for EC2 instance types for available regions.
 """
-logger = logging.getLogger(__name__)
 ERRORS = []
 # XDG_DATA_HOME = os.path.join(os.path.expanduser('~'), '.local', 'share')
 SCRPR_HOME = os.path.join(os.path.expanduser('~'), '.local', 'share', 'scrpr')
@@ -70,6 +73,21 @@ INITIAL_MEM = MAIN_PROCESS.memory_info()
 ###############################################################################
 # classes and functions
 ###############################################################################
+def exit_func():
+    set_api_status("idle")
+
+atexit.register(exit_func)
+
+def set_api_status(status: str):
+    try:
+        fastapi_db = database.SessionLocal()
+        logger.debug(f"state transition: {crud.get_system_status(fastapi_db)} -> {status}")
+        crud.set_system_status(status, fastapi_db)
+    except Exception:
+        logger.warning("unable to set api status (desired status is '{}')".format(status))
+
+
+
 class ScrprException(Exception):
     """Not sure if my global ERRORS contraption is a great idea..."""
 
@@ -1184,6 +1202,8 @@ def main(args: MainConfig):  # noqa: C901
         log_file=args.log_file
     )
     # logger.critical(f"\033[44mmain mem: {main_process.memory_info().rss}\033[0m")
+    fastapi_db = database.SessionLocal()
+    logger.info(crud.get_system_status(fastapi_db))
 
     logger.warning("This program is still under development, log output may be ... less than scrupulous.")
     logger.info("Starting program with PID {}".format(os.getpid()))
@@ -1246,6 +1266,7 @@ def main(args: MainConfig):  # noqa: C901
     ##########################################################################
     # regions and operating systems
     ##########################################################################
+    set_api_status("collecting available regions and operating systems")
     # logger.critical(f"\033[44mmem before region/os collection: {main_process.memory_info().rss}\033[0m")
     os_region_collector = EC2DataCollector('os_region_collector', config=config)
     tgt_oses = os_region_collector.get_available_operating_systems()
@@ -1272,6 +1293,7 @@ def main(args: MainConfig):  # noqa: C901
     ##########################################################################
     # main
     ##########################################################################
+    set_api_status("running")
     # argparsing
     if args.regions is not None:
         logger.debug("Validating provided regions...")
@@ -1335,6 +1357,7 @@ def main(args: MainConfig):  # noqa: C901
     ##########################################################################
     # after data has been collected
     ##########################################################################
+    set_api_status("cleaning up")
     # argparsing
     if args.compress and csv_data_dir:
         compress_data(csv_data_dir, 'ec2', human_date, rm_tree=True)
@@ -1396,8 +1419,8 @@ def main(args: MainConfig):  # noqa: C901
             csv.DictWriter(f, fieldnames=['id', 'num_instances', 't_run'], delimiter='\t').writerow(thread_run_time)
 
 
-if __name__ == '__main__':
-    import sys
-    cli_args = do_args(sys.argv[1:])
-    args = MainConfig(**cli_args.__dict__)
-    raise SystemExit(main(args))
+# if __name__ == '__main__':
+#     import sys
+#     cli_args = do_args(sys.argv[1:])
+#     args = MainConfig(**cli_args.__dict__)
+#     raise SystemExit(main(args))
