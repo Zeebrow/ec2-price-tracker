@@ -3,20 +3,6 @@ from sqlalchemy.orm import relationship
 
 from .database import Base
 
-class Instance(Base):
-    __tablename__ = "ec2_instance_pricing"
-
-    pk = Column(String, primary_key=True)
-    date = Column(Date, index=True)
-    instance_type = Column(String)
-    operating_system = Column(String)
-    region = Column(String)
-    storage_type = Column(String)
-    network_throughput = Column(String)
-    cost_per_hr = Column(Double)
-    cpu_ct = Column(Integer)
-    ram_size_gb = Column(Integer)
-
 
 class CommandLine(Base):
     __tablename__ = "command_line"
@@ -52,9 +38,16 @@ class Metric(Base):
     s_db = Column(Integer)
     reported_errors = Column(Integer)
 
-class Run(Base):
-    __tablename__ = "runs"
+class SystemStatus(Base):
+    __tablename__ = "system_status"
+    status = Column(String, primary_key=True)
+
+class RunStatus(Base):
+    __tablename__ = "run_status"
     run_id = Column(Integer, primary_key=True, index=True)
     run_no = Column(Integer)
     datetime = Column(Date)
     succeeded = Column(Boolean)
+    threads_done = Column(Integer)
+    threads_total = Column(Integer)
+    status = Column(String)

@@ -5,23 +5,6 @@ from typing import List
 
 from pydantic import BaseModel
 
-
-class Instance(BaseModel):
-    # pk: str
-    date: date
-    instance_type: str
-    operating_system: str
-    region: str
-    cost_per_hr: float
-    cpu_ct: int
-    ram_size_gb: int
-    storage_type: str
-    network_throughput: str
-
-    class Config:
-        orm_mode = True
-
-
 # input:
 #     {
 #   "run_no": 0,
@@ -64,18 +47,8 @@ class CommandLine(BaseModel):
     class Config:
         orm_mode = True
 
-
-class MetricBase(BaseModel):
-    run_no: int
-    date: date
-    threads: int
-    oses: int
-    regions: int
-    t_init: float
-    t_run: float
-    s_csv: int
-    s_db: int
-    reported_errors: int
+class SystemStatus(BaseModel):
+    status = str
 
     class Config:
         orm_mode = True
