@@ -84,7 +84,6 @@ def set_api_status(status: str):
         logger.warning("unable to set api status (desired status is '{}')".format(status))
 
 
-
 class ScrprException(Exception):
     """Not sure if my global ERRORS contraption is a great idea..."""
 
