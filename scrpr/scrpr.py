@@ -73,10 +73,7 @@ INITIAL_MEM = MAIN_PROCESS.memory_info()
 ###############################################################################
 # classes and functions
 ###############################################################################
-def exit_func():
-    set_api_status("idle")
 
-atexit.register(exit_func)
 
 def set_api_status(status: str):
     try:
@@ -1180,7 +1177,18 @@ def get_date():
     return datetime.datetime.now()
 
 
-# @memory_profiler.profile
+def api_status_wrapper(f):
+    # atexit.register(exit_func)
+    def wrapper(*args, **kwargs):
+        set_api_status("starting")
+        print("starting")
+        f(*args, **kwargs)
+        set_api_status("idle")
+        print("idle")
+    return wrapper
+
+
+@api_status_wrapper
 def main(args: MainConfig):  # noqa: C901
     main_process = psutil.Process()  # noqa: F841
 
@@ -1202,8 +1210,6 @@ def main(args: MainConfig):  # noqa: C901
         log_file=args.log_file
     )
     # logger.critical(f"\033[44mmain mem: {main_process.memory_info().rss}\033[0m")
-    fastapi_db = database.SessionLocal()
-    logger.info(crud.get_system_status(fastapi_db))
 
     logger.warning("This program is still under development, log output may be ... less than scrupulous.")
     logger.info("Starting program with PID {}".format(os.getpid()))
