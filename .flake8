@@ -1,9 +1,9 @@
 [flake8]
 ignore = E501,E128,E266,F401
 filename = 
-  ./scrpr.py
+  ./scrpr/scrpr.py
   ./did_i_run_this_today.py
-  ./ec2/instance.py
+  ./scrpr/ec2/instance.py
   ./tests/test_*.py
   ./tests/*_test.py
 max-complexity = 10
