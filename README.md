@@ -1,13 +1,3 @@
-# NOTE:
-
-`scrpr.py` is not working as it used to: Seems the DOM for the EC2 pricing page changed for Chrome and Firefox within the past 24 hours (6/28/23).
-
-`scrpr.py` needs a few hacks to get running! With these changes, hopefully we can also be more resistant to such changes in the future.
-
-Thanks for your patience. Any contributions are welcome!
-
-- zeebrow
-
 # scrape cost data for ec2
 
 Use a headless Chrome browser to gather EC2 price info: <https://aws.amazon.com/ec2/pricing/on-demand/>
