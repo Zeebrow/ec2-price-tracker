@@ -3,7 +3,7 @@ import csv
 import datetime
 from pathlib import Path
 from math import floor
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 import zipfile
 import logging
 from logging.handlers import RotatingFileHandler
@@ -127,7 +127,7 @@ class DatabaseConfig:
         config = dotenv.dotenv_values(env_file)
         if config:
             self.host = config.get("db_host", "localhost")
-            self.port = int(config.get("db_port", 5432))
+            self.port = int(config.get("db_port", 5432))  # pyright:ignore
             self.dbname = config.get("db_dbname", "scrpr")
             self.user = config.get("db_user", "scrpr")
             self.password = config.get("db_password", None)
@@ -183,8 +183,8 @@ class DataCollectorConfig:
 @dataclass
 class EC2DataCollectorConfig(DataCollectorConfig):
     url: str = 'https://aws.amazon.com/ec2/pricing/on-demand/'
-    db_config: DatabaseConfig = None
-    csv_data_dir: str = None
+    db_config: Optional[DatabaseConfig] = None
+    csv_data_dir: Optional[str] = None
 
 
 seconds_to_timer = lambda x: f"{floor(x/60)}m:{x%60:.1000f}s ({x} seconds)"  # noqa: E731
@@ -205,9 +205,12 @@ class ThreadDivvier:
 
     def init_scraper(self, thread_id: int, config: DataCollectorConfig) -> None:
         try:
-            # this feels like a common problem that I don't have an immediate answer for.
-
+            # this feels like a common problem that I don't know how to search for.
+            # pyright and I do not like assigning an instance of type
+            # DataCollectorConfig which is only supposed to accept
+            # EC2DataCollectorConfig, a subclass.
             d = EC2DataCollector(_id=thread_id, config=config)
+
             # after = psutil.Process().memory_info().rss
             # logger.critical(f"\033[44m{thread_id} {after=}\033[0m")
             # print("change = {}".format(after.rss - before.rss))
@@ -404,6 +407,7 @@ class EC2DataCollector(DataCollector):
         }
 
         table_functions_map['header'] = {
+            'element': data_selection_root.find_element(By.XPATH, './/table/thead/tr'),
             # TIL: td.text properly finds the text describing each column,
             # despite the fact that the element containing it is serveral children deep
             'content': [td.text for td in data_selection_root.find_elements(By.XPATH, './/table/thead/tr/th')]
@@ -581,13 +585,6 @@ class EC2DataCollector(DataCollector):
             raise e
         raise ScrprException("{} No such operating system: '{}'".format(self._id, _os))
 
-#    def iframe_wrapper(self, f):
-#        def wrapper(*args, **kwargs):
-#            self.driver.switch_to.frame(self.iframe)
-#            f(*args, **kwargs)
-#            self.driver.switch_to.default_content()
-#        return wrapper
-
     def get_available_regions(self) -> List[str]:
         """
         Get all aws regions for filtering data
@@ -599,6 +596,7 @@ class EC2DataCollector(DataCollector):
             DeprecationWarning,
             stacklevel=1
         )
+        logger.debug("{} get available regions".format(self._id))
         return self.dropdowns['Region']['options']
 
     def select_region(self, region: str):
@@ -705,13 +703,13 @@ class EC2DataCollector(DataCollector):
             self.driver.switch_to.frame(self.iframe)
             rtn: List[PGInstance] = []
 
-#            logger.debug("{} resetting view port position...".format(self._id))
-#            self.scroll(-10000)
+            logger.debug("{} resetting view port position...".format(self._id))
+            self.scroll(-10000)
 
-#            logger.debug("{} scrolling table into view...".format(self._id))
-#            self.scroll(header.location['y'])
-#            self.scroll(header.size['height'] * 4)
-#            time.sleep(delay)
+            logger.debug("{} scrolling table into view...".format(self._id))
+            self.scroll(self.table['header']['element'].location['y'])
+            self.scroll(self.table['header']['element'].size['height'] * 4)
+            time.sleep(delay)
 
             # On EC2 pricing page:
             # page numbers (1, 2, 3, (literal)..., last, >)
@@ -1321,6 +1319,7 @@ def get_date():
     """
     Get an unaware datestamp for ID purposes..
     """
+    # @@@ tzinfo
     return datetime.datetime.now()
 
 
@@ -1341,6 +1340,7 @@ def main(args: MainConfig):  # noqa: C901
     # set the collection date relative to time main() was called
     # this applies to all data stored in database
     datestamp = get_date()
+    # human-readable datestamp
     human_date: str = datestamp.strftime("%Y-%m-%d")
 
     metric_data = MetricData(human_date)
