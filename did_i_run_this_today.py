@@ -149,7 +149,12 @@ def runtime_averages(env_file=".env"):
     # build map of # of threads in run -> num of times run w/ key thread count
     # columns
     #  run_no |    date    | threads | oses | regions |       t_init       |       t_run        |  s_csv   |   s_db    | reported_errors | command_line
-    query = sql.SQL("SELECT threads, t_run FROM {} where date != '1999-12-31' ORDER BY threads ASC".format(table_name))
+    query = sql.SQL("""\
+            SELECT threads, t_run
+            FROM {}
+            where date != '1999-12-31' AND (regions > 27) AND (oses > 16)
+            ORDER BY threads ASC
+            """.format(table_name))
     conn = get_conn(env_file)
     cur = conn.cursor()
     cur.execute(query)
