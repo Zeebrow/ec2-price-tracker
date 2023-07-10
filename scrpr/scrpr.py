@@ -454,7 +454,7 @@ class EC2DataCollector(DataCollector):
         self.driver.switch_to.frame(self.iframe)
         dropdowns_map = {}
         xpath_query_re = re.compile(r'([a-z]*)="(.*)(-label)"')
-        region_re = re.compile(r'^[a-z]{2}-[a-z]*-[1-9]$')
+        region_re = re.compile(r'^[a-z]{2}-(gov-)?[a-z]*-[1-9]$')
 
         data_analytics_divs = self.driver.find_elements(By.XPATH, "//*[@data-analytics-field-label]")
         if len(data_analytics_divs) == 0:
