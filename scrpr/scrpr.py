@@ -299,9 +299,7 @@ class ThreadDivvier:
                 # This will cause the script to hang after it is done running, at least.
                 if not d.lock.locked() and d._id not in threads_finished:
                     threads_finished.append(d._id)
-                    # @@@ see if this doesn't clean up all of the unclosed socket warnings
                     d.driver.quit()
-                    # d.driver.close()
         return
 
 
@@ -509,9 +507,9 @@ class EC2DataCollector(DataCollector):
             time.sleep(delay)
         except Exception as e:  # pragma: no cover
             logger.critical("While initializing worker '{}', an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, e), exc_info=True)
-            self.driver.close()
+            self.driver.quit()
             raise ScrprCritical("While initializing worker '{}', an exception occurred which requires closing the Selenium WebDriver: {}")
-    
+
     def get_dropdown_menus(self) -> None:
         """
         Create self.Region, self.InstanceType, and self.OperatingSystem classes
@@ -955,7 +953,7 @@ class EC2DataCollector(DataCollector):
             # ¯\_(ツ)_/¯
             self.driver.switch_to.default_content()
         except Exception as e:  # pragma: no cover
-            self.driver.close()
+            self.driver.quit()
             logger.error("{} error getting number of results: {}".format(self._id, e), exc_info=True)
             raise e
         return int(t.split("of")[1].split(" available")[0].strip())
@@ -974,7 +972,7 @@ class EC2DataCollector(DataCollector):
             return
 
         except Exception as e:  # pragma: no cover
-            self.driver.close()
+            self.driver.quit()
             logger.error("{} Error waiting for menus to close: {}".format(self._id, e), exc_info=True)
             raise e
 
@@ -1477,7 +1475,7 @@ def main(args: MainConfig):  # noqa: C901
         print("Available Regions:")
         for r in tgt_regions:
             print(f"\t{r}")
-    os_region_collector.driver.close()
+    os_region_collector.driver.quit()
     # logger.critical(f"\033[44mmem after region/os collection close: {main_process.memory_info().rss}\033[0m")
     # argparsing
     if args.get_operating_systems or args.get_regions:
