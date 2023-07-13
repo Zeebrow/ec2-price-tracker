@@ -429,16 +429,33 @@ class EC2DataCollector(DataCollector):
 
     class Dropdown:
         def __init__(self, driver: WebDriver, iframe: WebElement):
-            self.driver: WebDriver = driver  # elenium.webdriver.chrome.webdriver.WebDriver
-            self.iframe: WebElement = iframe  # selenium.webdriver.remote.webelement.WebElement
-            # self._analytics_element: Optional[WebElement] = None  # selenium.webdriver.remote.webelement.WebElement
-            # self._button: Optional[WebElement] = None  # selenium.webdriver.remote.webelement.WebElement
-            self.analytics_element: Optional[WebElement] = None  # selenium.webdriver.remote.webelement.WebElement
-            self.button: Optional[WebElement] = None  # selenium.webdriver.remote.webelement.WebElement
+            self.driver: WebDriver = driver
+            self.iframe: WebElement = iframe
+            self.analytics_element: Optional[WebElement] = None
+            self.button: Optional[WebElement] = None
             self.options: List[str] = []
 
         def current_value(self):
             return self.button.text
+
+        def select(self, selection: str) -> None:
+            logger.debug("select {} '{}'".format(self.__class__.__name__, selection))
+            try:
+                self.driver.switch_to.frame(self.iframe)
+                self.button.click()
+                lis = self.analytics_element.find_elements(By.XPATH, './/ul[@role="listbox"]/li')
+                for li in lis:
+                    if selection in li.text:
+                        li.click()
+                        break
+                self.driver.switch_to.default_content()
+                return
+
+            except Exception as e:  # pragma: no cover
+                self.driver.quit()
+                logger.error(e)
+                # @@ do we need to raise?
+                raise
 
     class Region(Dropdown):
         def __init__(self, driver: WebDriver, iframe: WebElement):
@@ -466,10 +483,10 @@ class EC2DataCollector(DataCollector):
             self.prep_driver()
         self._in_iframe = False
         self.region_dropdown = None
-        self.instance_type_dropdown= None
-        self.operating_system_dropdown= None
-        self.location_type_dropdown= None
-        self.cpu_dropdown= None
+        self.instance_type_dropdown = None
+        self.operating_system_dropdown = None
+        self.location_type_dropdown = None
+        self.cpu_dropdown = None
         # @@ this is slow and gets called twice
         # once when building the list of arguments for threads,
         # and again when initializing each driver in the threads.
@@ -550,7 +567,7 @@ class EC2DataCollector(DataCollector):
             category_xpath_query = f"//label[@{tag_name}='{label_for}{_label}']"
             button_xpath_query = f"//button[@{tag_name}='{label_for}']"
 
-            # extract the category name to determine what kind of dropdown 
+            # extract the category name to determine what kind of dropdown
             category_text_elem = self.driver.find_element(By.XPATH, category_xpath_query)
             button_click_elem = self.driver.find_element(By.XPATH, button_xpath_query)
 
@@ -605,7 +622,7 @@ class EC2DataCollector(DataCollector):
 
             # once finished, click button again to hide menu
             button_click_elem.click()
-            logger.warn("please clap")
+            logger.info("please clap")
         self.driver.switch_to.default_content()
         return None
 
@@ -631,26 +648,13 @@ class EC2DataCollector(DataCollector):
         NOTE: contains try/catch for self.driver
         NOTE: switches to iframe
         """
-        logger.debug("{} select os {}".format(self._id, _os))
-        try:
-            self.driver.switch_to.frame(self.iframe)
-
-            self.operating_system_dropdown.button.click()
-
-            lis = self.operating_system_dropdown.analytics_element.find_elements(By.XPATH, './/ul[@role="listbox"]/li')
-            # lis = category_types_list.find_elements(By.TAG_NAME, "li")
-            for li in lis:
-                if _os in li.text:
-                    li.click()
-                    break
-            # self.wait_for_menus_to_close()
-            self.driver.switch_to.default_content()
-            return _os
-
-        except Exception as e:  # pragma: no cover
-            self.driver.close()
-            logger.error(e)
-            raise e
+        warnings.warn(
+            "select_operating_system is deprecated: use operating_system_dropdown.select('os') instead.",
+            DeprecationWarning,
+            stacklevel=1
+        )
+        self.operating_system_dropdown.select(_os)
+        return _os
 
     def get_available_regions(self) -> List[str]:
         """
@@ -672,24 +676,13 @@ class EC2DataCollector(DataCollector):
         NOTE: contains try/catch for self.driver
         NOTE: switches to iframe
         """
-        logger.debug("{} select region '{}'".format(self._id, region))
-        try:
-            self.driver.switch_to.frame(self.iframe)
-
-            self.region_dropdown.button.click()
-            lis = self.region_dropdown.analytics_element.find_elements(By.XPATH, './/ul[@role="listbox"]/li')
-            for li in lis:
-                if region in li.text:
-                    li.click()
-                    break
-            # self.wait_for_menus_to_close()
-            self.driver.switch_to.default_content()
-            return region
-
-        except Exception as e:  # pragma: no cover
-            self.driver.close()
-            logger.error(e)
-            raise e
+        warnings.warn(
+            "get_available_regions is deprecated: use self.region_dropdown.options instead.",
+            DeprecationWarning,
+            stacklevel=1
+        )
+        self.region_dropdown.select(region)
+        return region
 
     def collect_ec2_data(self, _os: str, region: str) -> List[Instance]:
         """
