@@ -517,6 +517,16 @@ class EC2DataCollector(DataCollector):
             self.driver.quit()
             raise ScrprCritical("While initializing worker '{}', an exception occurred which requires closing the Selenium WebDriver: {}")
 
+    def _get_data_analytics_divs(self) -> List[WebElement]:
+        # voodoo?
+        self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//*[@data-analytics-field-label]")))
+        data_analytics_divs = self.driver.find_elements(By.XPATH, "//*[@data-analytics-field-label]")
+        logger.debug("{} data analytics elements found.".format(len(data_analytics_divs)))
+        if len(data_analytics_divs) == 0:
+            logger.error("could not find data analytics div! No data could be extracted.")
+            raise SystemExit(1)
+        return data_analytics_divs
+
     def get_dropdown_menus(self) -> None:
         """
         Create self.Region, self.InstanceType, and self.OperatingSystem classes
@@ -529,48 +539,38 @@ class EC2DataCollector(DataCollector):
         switches to iframe
         """
         self.driver.switch_to.frame(self.iframe)
-        xpath_query_re = re.compile(r'([a-z]*)="(.*)(-label)"')
-        region_re = re.compile(r'^[a-z]{2}-(gov-)?[a-z]*-[1-9]$')
-
-        # voodoo?
-        self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//*[@data-analytics-field-label]")))
-        data_analytics_divs = self.driver.find_elements(By.XPATH, "//*[@data-analytics-field-label]")
-        logger.debug("{} data analytics elements found.".format(len(data_analytics_divs)))
-        if len(data_analytics_divs) == 0:
-            logger.error("could not find data analytics div! No data could be extracted.")
-            raise SystemExit(1)
-
-        # @@@ maybe return list of dads here
 
         # sift through and find the key terms we can filter on
+        data_analytics_divs = self._get_data_analytics_divs()
+
         for dad in data_analytics_divs:
             # find all clickable drop-down menus by using very, very conveniently attributed divs
             # amazon watching us watch them...
             query_category = dad.get_attribute('data-analytics-field-label')
 
             # parse the xpath expression contained within
-            tag_name, label_for, _label = None, None, None
-            xpath_query = xpath_query_re.search(query_category)
-            if xpath_query is not None:  # keep pyright happy
-                tag_name, label_for, _label = xpath_query.groups()
-                if tag_name != 'id':
-                    logger.warning("Possibly ambiguous identifier used to locate dropdown menus ({})".format(tag_name))
-            else:
+            if (xpath_query := re.search(r'(?P<tag_name>[a-z]*)="(?P<label_for>.*)(?P<_label>-label)"', query_category)) is None:
                 logger.error("Could not derive xpath query from data analyitics field label '{}'".format(query_category))
                 # TODO: something more useful?
                 raise SystemExit(1)
+            else:
+                if xpath_query.groupdict()['tag_name'] != 'id':
+                    logger.warning("Possibly ambiguous identifier used to locate dropdown menus ({})".format(xpath_query.groupdict()['tag_name']))
 
             # construct required xpath queries from data analytics div data
-            # get a name for the type of data "category" that the dropdown menu filters
-            # and populate the corresponding dropdown menu class.
-            # Note Location Type must always be 'Region'
+            # Note Location Type must always be 'Region' and is ignored
             #
             # There will always be Operating System, Instance Type, and vCPU once
             # a Location Type is specified.
-
-            # I think pass these to a factory method, which returns a dropdown class
-            category_xpath_query = f"//label[@{tag_name}='{label_for}{_label}']"
-            button_xpath_query = f"//button[@{tag_name}='{label_for}']"
+            category_xpath_query = "//label[@{}='{}{}']".format(
+                xpath_query.groupdict()['tag_name'],
+                xpath_query.groupdict()['label_for'],
+                xpath_query.groupdict()['_label'],
+            )
+            button_xpath_query = "//button[@{}='{}']".format(
+                xpath_query.groupdict()['tag_name'],
+                xpath_query.groupdict()['label_for'],
+            )
 
             # extract the category name to determine what kind of dropdown
             category_text_elem = self.driver.find_element(By.XPATH, category_xpath_query)
@@ -590,7 +590,7 @@ class EC2DataCollector(DataCollector):
                     if category_text_elem.text == 'Region':
                         if '\n' in option:
                             t = option.split('\n')[-1]
-                            if region_re.search(t):
+                            if re.search(r'^[a-z]{2}-(gov-)?[a-z]*-[1-9]$', t):
                                 options.append(t)
                     else:
                         # @@@ test
@@ -605,19 +605,16 @@ class EC2DataCollector(DataCollector):
                     self.region_dropdown.button = button_click_elem
                     self.region_dropdown.analytics_element = dad
                     self.region_dropdown.options = options
-                    self.region_dropdown.options_list = options_list
                 case 'Operating system':
                     self.operating_system_dropdown = EC2OperatingSystem(self.driver, self.iframe)
                     self.operating_system_dropdown.button = button_click_elem
                     self.operating_system_dropdown.analytics_element = dad
                     self.operating_system_dropdown.options = options
-                    self.operating_system_dropdown.options_list = options_list
                 case 'Instance type':
                     self.instance_type_dropdown = EC2InstanceType(self.driver, self.iframe)
                     self.instance_type_dropdown.button = button_click_elem
                     self.instance_type_dropdown.analytics_element = dad
                     self.instance_type_dropdown.options = options
-                    self.instance_type_dropdown.options_list = options_list
                 case 'vCPU':  # not something we filter based on
                     pass
                 case 'Location Type':  # always "AWS Region"
