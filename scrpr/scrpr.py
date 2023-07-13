@@ -348,7 +348,7 @@ class DataCollector:
         time.sleep(1)
 
 
-class EC2TableBase:
+class EC2DataCollectionElementBase:
     # def __init__(self, driver: WebDriver, iframe: WebElement) -> None:
     def __init__(self, driver: WebDriver, data_selection_root: WebElement) -> None:
         self.driver = driver
@@ -366,45 +366,12 @@ class EC2TableBase:
         return rtn
 
 
-class EC2Table(EC2TableBase):
+class EC2Table(EC2DataCollectionElementBase):
 
-    def __init__(self, driver: WebDriver, data_selection_root: WebElement):
+    def __init__(self, driver: WebDriver, data_selection_root: WebElement) -> None:
         super().__init__(driver, data_selection_root)
-        self.header = self.Header(driver)
-        self.rows = self.Rows(driver)
-
-    class Header(EC2TableBase):
-        """ Represents the clickable header of the EC2 pricing table.  """
-        def __init__(self, driver) -> None:
-            super().__init__(driver)
-            self.element = self.get_element()
-
-        def get_element(self) -> WebElement:
-            """requires switching to iframe"""
-            # self.driver.switch_to.frame(self.iframe)
-            rtn = self.data_selection_root.find_element(By.XPATH, './/table/thead/tr')
-            # self.driver.switch_to.default_content()
-            return rtn
-
-    class Rows(EC2TableBase):
-        """
-        Reporesents where all the juicy data lives. The big kahuna, if you will.
-        """
-        def __init__(self, driver) -> None:
-            super().__init__(driver)
-
-        def get_rows(self) -> List[WebElement]:
-            """requires switching to iframe"""
-            return [tr for tr in self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')]
-
-        def get_total_row_count(self) -> int:
-            """requires switching to iframe"""
-            row_count_re = re.compile(r'([0-9]{1,3}) available instances$')
-            return [int(b.groups()[0]) if (b := row_count_re.search(self.data_selection_root.find_element(By.XPATH, './/h2/span').text)) is not None else -1][0]
-
-        def get_rows_count_on_page(self) -> int:
-            """requires switching to iframe"""
-            return len([tr for tr in self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')])
+        self.header = Header(driver, data_selection_root)
+        self.rows = Rows(driver, data_selection_root)
 
     def get_current_page(self) -> int:
         """ requires switching to iframe """
@@ -421,6 +388,41 @@ class EC2Table(EC2TableBase):
     def navto_next_page(self) -> None:
         """ requires switching to iframe """
         self.data_selection_root.find_element(By.XPATH, './/ul/li[last()]').click()
+
+
+class Header(EC2DataCollectionElementBase):
+    """ Represents the clickable header of the EC2 pricing table.  """
+    def __init__(self, driver: WebDriver, data_selection_root: WebElement) -> None:
+        super().__init__(driver, data_selection_root)
+        self.element = self.get_element()
+
+    def get_element(self) -> WebElement:
+        """requires switching to iframe"""
+        # self.driver.switch_to.frame(self.iframe)
+        rtn = self.data_selection_root.find_element(By.XPATH, './/table/thead/tr')
+        # self.driver.switch_to.default_content()
+        return rtn
+
+class Rows(EC2DataCollectionElementBase):
+    """
+    Reporesents where all the juicy data lives. The big kahuna, if you will.
+    """
+    def __init__(self, driver: WebDriver, data_selection_root: WebElement) -> None:
+        super().__init__(driver, data_selection_root)
+
+    def get_rows(self) -> List[WebElement]:
+        """requires switching to iframe"""
+        return [tr for tr in self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')]
+
+    def get_total_row_count(self) -> int:
+        """requires switching to iframe"""
+        row_count_re = re.compile(r'([0-9]{1,3}) available instances$')
+        return [int(b.groups()[0]) if (b := row_count_re.search(self.data_selection_root.find_element(By.XPATH, './/h2/span').text)) is not None else -1][0]
+
+    def get_rows_count_on_page(self) -> int:
+        """requires switching to iframe"""
+        return len([tr for tr in self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')])
+
 
 class EC2Dropdown:
     def __init__(self, driver: WebDriver):
@@ -499,10 +501,10 @@ class EC2DataCollector(DataCollector):
         # and again when initializing each driver in the threads.
         self.driver.switch_to.frame(self.iframe)
         dsr = self.driver.find_element(By.XPATH, "//*[@data-selection-root]")
-        self.driver.switch_to.default_content()
         print(dsr)
-        self.get_dropdown_menus()
         self.table = EC2Table(self.driver, dsr)
+        self.driver.switch_to.default_content()
+        self.get_dropdown_menus()
         self.lock.release()
 
     def prep_driver(self):
@@ -703,6 +705,7 @@ class EC2DataCollector(DataCollector):
         Select an operating system and region to fill the pricing page table with data, scrape it, and save it to a csv file.
         CSV files are saved in a parent directory of self.csv_data_dir, by date then by operating system. e.g. '<self.csv_data_dir>/2023-01-18/Linux'
         NOTE: contains try/catch for self.driver
+        NOTE: switches to iframe
 
         NOTE: Fails for small browser sizes
 
@@ -711,38 +714,7 @@ class EC2DataCollector(DataCollector):
 
         raises: ScrprCritical
         """
-        delay = 0.5
-        logger.debug(f"{self._id} scrape all: {region=} {_os=}")
-        # time.sleep(delay)
 
-        ########################
-        # set table filters appropriately
-        ########################
-        try:
-            logger.debug("{} selecting operating system...".format(self._id))
-            # self.select_operating_system(_os)
-            self.operating_system_dropdown.select(_os)
-            logger.debug("{} operating system selected.".format(self._id))
-            time.sleep(delay)
-            logger.debug("{} selecting region...".format(self._id))
-            # self.select_region(region)
-            self.region_dropdown.select(region)
-            logger.debug("{} region selected, scraping...".format(self._id))
-            time.sleep(delay)
-
-            logger.debug("{} resetting view port position...".format(self._id))
-            self.scroll(-10000)
-
-
-        except ScrprException:  # pragma: no cover
-            logger.error("{} failed to select an operating system '{}' for region {}, this data will not be recorded if it exists!".format(self._id, _os, region), exc_info=True)
-            return []
-        return self.collect_table_row_data(_os, region)
-
-    def collect_table_row_data(self, _os: str, region: str) -> List[Instance]:
-        """
-        NOTE: switches to iframe
-        """
         global ROWS_COLLECTED
         # delay = 0.5
         # # voodoo
@@ -750,10 +722,15 @@ class EC2DataCollector(DataCollector):
         # self.scroll(self.table.header.element.location['y'])
         # self.scroll(self.table.header.element.size['height'] * 4)
         # time.sleep(delay)
+        delay = 0.2  # voodoo
+        logger.debug(f"{self._id} scrape all: {region=} {_os=}")
         try:
             rtn: List[PGInstance] = []
 
+            # set table filters appropriately
             self.driver.switch_to.frame(self.iframe)
+            self.operating_system_dropdown.select(_os, delay=delay)
+            self.region_dropdown.select(region, delay=delay)
 
             num_pages = self.table.get_total_pages()
             validation_rows_scraped_per_page = {}
