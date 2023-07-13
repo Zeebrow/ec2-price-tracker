@@ -370,7 +370,7 @@ class EC2Table(EC2TableBase):
             super().__init__(driver, iframe)
             self.element = self.get_element()
 
-        def get_element(self):
+        def get_element(self) -> WebElement:
             """requires switching to iframe"""
             self.driver.switch_to.frame(self.iframe)
             # @@ can selenium determine if the iframe is selected?
@@ -387,16 +387,16 @@ class EC2Table(EC2TableBase):
         def __init__(self, driver, iframe) -> None:
             super().__init__(driver, iframe)
 
-        def get_rows(self):
+        def get_rows(self) -> List[WebElement]:
             """requires switching to iframe"""
             return [tr for tr in self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')]
 
-        def get_total_row_count(self):
+        def get_total_row_count(self) -> int:
             """requires switching to iframe"""
             row_count_re = re.compile(r'([0-9]{1,3}) available instances$')
             return [int(b.groups()[0]) if (b := row_count_re.search(self.data_selection_root.find_element(By.XPATH, './/h2/span').text)) is not None else -1][0]
 
-        def get_rows_count_on_page(self):
+        def get_rows_count_on_page(self) -> int:
             """requires switching to iframe"""
             return len([tr for tr in self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')])
 
@@ -913,7 +913,7 @@ class EC2DataCollector(DataCollector):
 
         try:
             ################# # Postgres #################
-            if self.db_config is not None:
+            if self.db_config is not None:  # @@@ when is self.db_config ever None?
                 stored_count, error_count = self.store_postgres(instances)
                 ROWS_STORED += stored_count
                 if error_count > 0:
