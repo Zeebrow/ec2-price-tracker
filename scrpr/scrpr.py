@@ -63,6 +63,7 @@ DEFAULT_LOG_FILE = os.path.join(SCRPR_HOME, "logs", "scrpr.log")
 _THREAD_RUN_TIMES = []
 ROWS_COLLECTED = 0
 ROWS_STORED = 0
+ROWS_ALREADY_EXISTED = 0
 
 ####################### memory stuf
 TOTAL_MEM_SYS = psutil.virtual_memory().total
@@ -809,6 +810,7 @@ class EC2DataCollector(DataCollector):
         the EC2DataCollector instance's configured database parameters.
         returns (written_count, error_count)
         """
+        global ROWS_ALREADY_EXISTED
         error_count = 0
         already_existed_count = 0
         stored_count = 0
@@ -828,6 +830,7 @@ class EC2DataCollector(DataCollector):
         # squash a bunch of warnings into one
         if already_existed_count:
             logger.warning("{} records already existed in database and were not stored".format(already_existed_count))
+            ROWS_ALREADY_EXISTED += already_existed_count
         return (stored_count, error_count)
 
     def save_csv(self, region, _os, instances: List[Instance]) -> Tuple[int, int]:
@@ -1585,13 +1588,17 @@ def main(args: MainConfig):  # noqa: C901
     logger.debug("Saving run's metric data to '{}'".format(DEFAULT_METRICS_DATA_FILE))
     metric_data.store(db_config)
     logger.info("Program finished with {} errors in {}".format(len(ERRORS), seconds_to_timer(metric_data.t_run)))
-    logger.debug('---------------------------------------------------')
-    logger.debug("errors ({}):".format(len(ERRORS)))
-    for e in ERRORS:
-        logger.error(e)
-    logger.debug('---------------------------------------------------')
+    logger.debug('-----------------errors ({})---------------------------'.format(len(ERRORS)))
+    for n, e in enumerate(ERRORS):
+        logger.error("{}) {}".format(n+1, e))
+    logger.debug('-----------------sanity check----------------------')
     print(f"{ROWS_COLLECTED=}")
     print(f"{ROWS_STORED=}")
+    print(f"{ROWS_ALREADY_EXISTED=}")
+    try:
+        print(f"{ROWS_STORED + ROWS_ALREADY_EXISTED == ROWS_COLLECTED=}")
+    except:
+        print("check yer f string")
 
     conn = psycopg2.connect(db_config.get_dsl())
     curr = conn.cursor()
