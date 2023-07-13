@@ -4,6 +4,8 @@ import datetime
 from pathlib import Path
 from math import floor
 from typing import List, Tuple, Dict, Any, Optional
+from selenium.webdriver.remote.webelement import WebElement
+from selenium.webdriver.remote.webdriver import WebDriver
 import zipfile
 import logging
 from logging.handlers import RotatingFileHandler
@@ -29,21 +31,19 @@ import dotenv
 from collections import OrderedDict
 import psutil
 import json
-import atexit
 import re
 import warnings
 
 from selenium.webdriver.common.by import By
-# from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait  # pyright:ignore
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.common import action_chains
 from selenium import webdriver
+from selenium.webdriver.remote.command import Command
 import psycopg2
 from psycopg2.errors import UniqueViolation
 from psycopg2 import sql
-# import memory_profiler
 
 from .instance import Instance, PGInstance
 from .api.sql_app import crud, database
@@ -55,13 +55,14 @@ logger = logging.getLogger(__name__)
 Scrapes pricing information for EC2 instance types for available regions.
 """
 ERRORS = []
-# XDG_DATA_HOME = os.path.join(os.path.expanduser('~'), '.local', 'share')
 SCRPR_HOME = os.path.join(os.path.expanduser('~'), '.local', 'share', 'scrpr')
 # this is overridable with the flag --csv-data-dir
 DEFAULT_CSV_DATA_DIR = os.path.join(SCRPR_HOME, "csv-data")
 DEFAULT_METRICS_DATA_FILE = os.path.join(SCRPR_HOME, "metric-data.txt")
 DEFAULT_LOG_FILE = os.path.join(SCRPR_HOME, "logs", "scrpr.log")
 _THREAD_RUN_TIMES = []
+ROWS_COLLECTED = 0
+ROWS_STORED = 0
 
 ####################### memory stuf
 TOTAL_MEM_SYS = psutil.virtual_memory().total
@@ -183,7 +184,7 @@ class DataCollectorConfig:
 @dataclass
 class EC2DataCollectorConfig(DataCollectorConfig):
     url: str = 'https://aws.amazon.com/ec2/pricing/on-demand/'
-    db_config: Optional[DatabaseConfig] = None
+    db_config: Optional[DatabaseConfig] = None  # @@@ what happens with this is None?
     csv_data_dir: Optional[str] = None
 
 
@@ -235,7 +236,7 @@ class ThreadDivvier:
             # before = psutil.Process().memory_info().rss
             # logger.critical(f"\033[44mthread {next_id} {before=}\033[0m")
             t = threading.Thread(
-                name=next_id,
+                name=str(next_id),
                 target=self.init_scraper,
                 args=(next_id, config),
                 daemon=False,
@@ -298,7 +299,9 @@ class ThreadDivvier:
                 # This will cause the script to hang after it is done running, at least.
                 if not d.lock.locked() and d._id not in threads_finished:
                     threads_finished.append(d._id)
-                    d.driver.close()
+                    # @@@ see if this doesn't clean up all of the unclosed socket warnings
+                    d.driver.quit()
+                    # d.driver.close()
         return
 
 
@@ -346,12 +349,108 @@ class DataCollector:
         time.sleep(1)
 
 
+class TableBase:
+    def __init__(self, driver, iframe) -> None:
+        self.driver = driver
+        self.iframe = iframe
+        self.data_selection_root = self._get_data_selection_root()
+
+    def _get_data_selection_root(self):
+        """ Each element we care about scraping has a data-selection-root attribute.  """
+        self.driver.switch_to.frame(self.iframe)
+        rtn = self.driver.find_element(By.XPATH, "//*[@data-selection-root]")
+        self.driver.switch_to.default_content()
+        return rtn
+
+
 class EC2DataCollector(DataCollector):
-    """
-    Instantiates a Selenium WebDriver for Chrome.
-    """
+    """ Instantiates a Selenium WebDriver for Chrome.  """
     data_type_scraped = 'ec2'
     url = 'https://aws.amazon.com/ec2/pricing/on-demand/'
+
+    class EC2Table(TableBase):
+
+        class Header(TableBase):
+            """ Represents the clickable header of the EC2 pricing table.  """
+            def __init__(self, driver, iframe) -> None:
+                super().__init__(driver, iframe)
+                self.element = self.get_element()
+
+            def get_element(self):
+                """requires switching to iframe"""
+                self.driver.switch_to.frame(self.iframe)
+                # @@ can selenium determine if the iframe is selected?
+                # print(f"{self.driver.current_window_handle=}")
+                rtn = self.data_selection_root.find_element(By.XPATH, './/table/thead/tr')
+                self.driver.switch_to.default_content()
+                # print(f"{self.driver.current_window_handle=}")
+                return rtn
+
+        class Rows(TableBase):
+            """
+            Reporesents where all the juicy data lives. The big kahuna, if you will.
+            """
+            def __init__(self, driver, iframe) -> None:
+                super().__init__(driver, iframe)
+
+            def get_rows(self):
+                """requires switching to iframe"""
+                return [tr for tr in self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')]
+
+            def get_total_row_count(self):
+                """requires switching to iframe"""
+                row_count_re = re.compile(r'([0-9]{1,3}) available instances$')
+                return [int(b.groups()[0]) if (b := row_count_re.search(self.data_selection_root.find_element(By.XPATH, './/h2/span').text)) is not None else -1][0]
+
+            def get_rows_count_on_page(self):
+                """requires switching to iframe"""
+                return len([tr for tr in self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')])
+
+        def __init__(self, driver, iframe):
+            super().__init__(driver, iframe)
+            self.header = self.Header(driver, iframe)
+            self.rows = self.Rows(driver, iframe)
+
+        def get_current_page(self) -> int:
+            """ requires switching to iframe """
+            return int(self.data_selection_root.find_element(By.XPATH, ".//li/button[@aria-current='true']").text)
+
+        def get_total_pages(self) -> int:
+            """ requires switching to iframe """
+            return int(self.data_selection_root.find_element(By.XPATH, './/ul/li[last()-1]').text)
+
+        def navto_first_page(self) -> None:
+            """ requires switching to iframe """
+            self.data_selection_root.find_element(By.XPATH, './/ul/li[2]').click()
+
+        def navto_next_page(self) -> None:
+            """ requires switching to iframe """
+            self.data_selection_root.find_element(By.XPATH, './/ul/li[last()]').click()
+
+    class Dropdown:
+        def __init__(self, driver: WebDriver, iframe: WebElement):
+            self.driver: WebDriver = driver  # elenium.webdriver.chrome.webdriver.WebDriver
+            self.iframe: WebElement = iframe  # selenium.webdriver.remote.webelement.WebElement
+            # self._analytics_element: Optional[WebElement] = None  # selenium.webdriver.remote.webelement.WebElement
+            # self._button: Optional[WebElement] = None  # selenium.webdriver.remote.webelement.WebElement
+            self.analytics_element: Optional[WebElement] = None  # selenium.webdriver.remote.webelement.WebElement
+            self.button: Optional[WebElement] = None  # selenium.webdriver.remote.webelement.WebElement
+            self.options: List[str] = []
+
+        def current_value(self):
+            return self.button.text
+
+    class Region(Dropdown):
+        def __init__(self, driver: WebDriver, iframe: WebElement):
+            super().__init__(driver, iframe)
+
+    class OperatingSystem(Dropdown):
+        def __init__(self, driver: WebDriver, iframe: WebElement):
+            super().__init__(driver, iframe)
+
+    class InstanceType(Dropdown):
+        def __init__(self, driver: WebDriver, iframe: WebElement):
+            super().__init__(driver, iframe)
 
     class NavSectionEC2:
         """3+ lines of code"""
@@ -365,11 +464,17 @@ class EC2DataCollector(DataCollector):
         self.url = config.url
         if _test_driver is None:
             self.prep_driver()
+        self._in_iframe = False
+        self.region_dropdown = None
+        self.instance_type_dropdown= None
+        self.operating_system_dropdown= None
+        self.location_type_dropdown= None
+        self.cpu_dropdown= None
         # @@ this is slow and gets called twice
         # once when building the list of arguments for threads,
         # and again when initializing each driver in the threads.
-        self.dropdowns = self.get_dropdown_menu_map()
-        self.table = self.get_table_functions()
+        self.get_dropdown_menus()
+        self.table = self.EC2Table(self.driver, self.iframe)
         self.lock.release()
 
     def prep_driver(self):
@@ -389,80 +494,36 @@ class EC2DataCollector(DataCollector):
             logger.critical("While initializing worker '{}', an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, e), exc_info=True)
             self.driver.close()
             raise ScrprCritical("While initializing worker '{}', an exception occurred which requires closing the Selenium WebDriver: {}")
-
-    def get_table_functions(self):
-        """swithes to iframe"""
-
-        self.driver.switch_to.frame(self.iframe)
-        data_selection_root = self.driver.find_element(By.XPATH, "//*[@data-selection-root]")
-        row_count_re = re.compile(r'([0-9]{1,3}) available instances$')
-
-        logger.debug("Creating table functions map")
-        table_functions_map = {
-            'get_current_page': lambda: int(data_selection_root.find_element(By.XPATH, ".//li/button[@aria-current='true']").text),
-            'get_total_pages': lambda: int(data_selection_root.find_element(By.XPATH, './/ul/li[last()-1]').text),
-            'navto_next_page': lambda: data_selection_root.find_element(By.XPATH, './/ul/li[last()]').click(),
-            'header': {},
-            'rows': {}
-        }
-
-        table_functions_map['header'] = {
-            'element': data_selection_root.find_element(By.XPATH, './/table/thead/tr'),
-            # TIL: td.text properly finds the text describing each column,
-            # despite the fact that the element containing it is serveral children deep
-            'content': [td.text for td in data_selection_root.find_elements(By.XPATH, './/table/thead/tr/th')]
-        }
-
-        # workflow like get_rows() -> nextpage.click() -> get_rows() -> ...
-        table_functions_map['rows'] = {
-            'get_row_count': lambda: [int(b.groups()[0]) if (b := row_count_re.search(data_selection_root.find_element(By.XPATH, './/h2/span').text)) is not None else -1][0],
-            'get_rows': lambda: [tr for tr in data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')]
-        }
-
-        # @@@
-        # TODO put tests where they belong
-        # test table_functions_map table
-        # os: Linux
-        # Region: us-east-1 (Ohio)
-        assert table_functions_map['get_current_page']() == 1
-        table_functions_map['navto_next_page']()
-        assert table_functions_map['get_current_page']() == 2
-        table_functions_map['navto_next_page']()
-        assert table_functions_map['get_current_page']() == 3
-        table_functions_map['navto_next_page']()
-        assert table_functions_map['get_current_page']() == 4
-        assert table_functions_map['rows']['get_row_count']() == 586
-        assert table_functions_map['get_total_pages']() == 30
-
-        for col in ['Instance name', 'On-Demand hourly rate', 'vCPU', 'Memory', 'Storage', 'Network performance']:
-            assert col in table_functions_map['header']['content']
-
-        # [print(r.get_attribute('aria-rowindex')) for r in table_functions_map['rows']['get_rows']()]
-        # test rows are returned sequentially by using the aria-rowindex attribute (which we can take to be sequential)
-        for idx, _ in enumerate(c := [ int(row.get_attribute('aria-rowindex')) for row in table_functions_map['rows']['get_rows']() ]):  # noqa: E201,E202
-            if idx < len(c) - 2:
-                assert c[idx] == c[idx + 1] - 1
-
-        # print(json.dumps(strip_datetime_from(table_functions_map), indent=2))
-        self.driver.switch_to.default_content()
-        return table_functions_map
-
-    def get_dropdown_menu_map(self) -> Dict[str, Any]:
+    
+    def get_dropdown_menus(self) -> None:
         """
+        Create self.Region, self.InstanceType, and self.OperatingSystem classes
+        from the WebElements available on the EC2 pricing page.
+
+        we do this here instead of in the classes
+        themselves to avoid having to
+        iterate over the DOM's data analytics divs for each class.
+
         switches to iframe
         """
         self.driver.switch_to.frame(self.iframe)
-        dropdowns_map = {}
         xpath_query_re = re.compile(r'([a-z]*)="(.*)(-label)"')
         region_re = re.compile(r'^[a-z]{2}-(gov-)?[a-z]*-[1-9]$')
 
+        # voodoo?
+        self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//*[@data-analytics-field-label]")))
         data_analytics_divs = self.driver.find_elements(By.XPATH, "//*[@data-analytics-field-label]")
+        logger.debug("{} data analytics elements found.".format(len(data_analytics_divs)))
         if len(data_analytics_divs) == 0:
-            logger.error("could not find data")
-            exit()
-        # sift
+            logger.error("could not find data analytics div! No data could be extracted.")
+            raise SystemExit(1)
+
+        # @@@ maybe return list of dads here
+
+        # sift through and find the key terms we can filter on
         for dad in data_analytics_divs:
             # find all clickable drop-down menus by using very, very conveniently attributed divs
+            # amazon watching us watch them...
             query_category = dad.get_attribute('data-analytics-field-label')
 
             # parse the xpath expression contained within
@@ -470,55 +531,83 @@ class EC2DataCollector(DataCollector):
             xpath_query = xpath_query_re.search(query_category)
             if xpath_query is not None:  # keep pyright happy
                 tag_name, label_for, _label = xpath_query.groups()
+                if tag_name != 'id':
+                    logger.warning("Possibly ambiguous identifier used to locate dropdown menus ({})".format(tag_name))
             else:
-                logger.warning("Could not derive xpath query from data analyitics field label '{}'".format(query_category))
-                # TODO: something more useful
+                logger.error("Could not derive xpath query from data analyitics field label '{}'".format(query_category))
+                # TODO: something more useful?
+                raise SystemExit(1)
 
-            # construct additional xpath queries.
+            # construct required xpath queries from data analytics div data
             # get a name for the type of data "category" that the dropdown menu filters
-            # Location Type => Region means next dropdown will be Labeled "Region"
+            # and populate the corresponding dropdown menu class.
+            # Note Location Type must always be 'Region'
+            #
             # There will always be Operating System, Instance Type, and vCPU once
             # a Location Type is specified.
+
+            # I think pass these to a factory method, which returns a dropdown class
             category_xpath_query = f"//label[@{tag_name}='{label_for}{_label}']"
             button_xpath_query = f"//button[@{tag_name}='{label_for}']"
 
-            # extract the category name
+            # extract the category name to determine what kind of dropdown 
             category_text_elem = self.driver.find_element(By.XPATH, category_xpath_query)
-            # save the id of the button so we can look it up later, do we need to?
             button_click_elem = self.driver.find_element(By.XPATH, button_xpath_query)
-            dropdowns_map[category_text_elem.text] = {
-                "analytics_element": dad,
-                "button": button_click_elem,
-                "options": [],
-            }
 
             # click the button to show menu
             button_click_elem.click()
-            category_types_list = dad.find_element(By.XPATH, './/ul[@role="listbox"]')
-            lis = category_types_list.find_elements(By.TAG_NAME, "li")
-            # extract the options
-            for li in lis:
-                if li.text is not None:  # contains the list of options
-                    if category_text_elem.text == 'Region':
-                        if '\n' in li.text:
-                            t = li.text.split('\n')[-1]
-                            if region_re.search(t):
-                                # @@ might be able to save hella time by storing the element to click here
-                                # basically searching only once instead of every time we need to click.
-                                dropdowns_map[category_text_elem.text]['options'].append(t)
-                    # elif category_text_elem.text == 'Operating system':
-                    # elif category_text_elem.text == 'Instance type':
-                    # elif category_text_elem.text == 'vCPU':
-                    # elif category_text_elem.text == 'Location Type':
-                    else:
-                        dropdowns_map[category_text_elem.text]['options'].append(li.text)
+            lis = dad.find_elements(By.XPATH, './/ul[@role="listbox"]/li')
 
-            # unclick the button to hide menu
+            # extract the options
+            # we do it here so that we only have to iterate over all of these
+            # elements once, instead of for each filter instanciated.
+            options = []
+            options_list = {}
+            for li in lis:
+                if (option := li.text) is not None:
+                    if category_text_elem.text == 'Region':
+                        if '\n' in option:
+                            t = option.split('\n')[-1]
+                            if region_re.search(t):
+                                options.append(t)
+                    else:
+                        # @@@ test
+                        options_list[option] = li
+                        options.append(option)
+
+            # after options have been collected, assign them to their rightful dropdown
+            # I sense a software design pattern going *woosh*
+            match category_text_elem.text:
+                case 'Region':
+                    self.region_dropdown = self.Region(self.driver, self.iframe)
+                    self.region_dropdown.button = button_click_elem
+                    self.region_dropdown.analytics_element = dad
+                    self.region_dropdown.options = options
+                    self.region_dropdown.options_list = options_list
+                case 'Operating system':
+                    self.operating_system_dropdown = self.OperatingSystem(self.driver, self.iframe)
+                    self.operating_system_dropdown.button = button_click_elem
+                    self.operating_system_dropdown.analytics_element = dad
+                    self.operating_system_dropdown.options = options
+                    self.operating_system_dropdown.options_list = options_list
+                case 'Instance type':
+                    self.instance_type_dropdown = self.InstanceType(self.driver, self.iframe)
+                    self.instance_type_dropdown.button = button_click_elem
+                    self.instance_type_dropdown.analytics_element = dad
+                    self.instance_type_dropdown.options = options
+                    self.instance_type_dropdown.options_list = options_list
+                case 'vCPU':  # not something we filter based on
+                    pass
+                case 'Location Type':  # always "AWS Region"
+                    pass
+                case _:
+                    logger.debug(f"unsupported filter category: {category_text_elem.text}")
+
+            # once finished, click button again to hide menu
             button_click_elem.click()
-        logger.warn("please clap")
+            logger.warn("please clap")
         self.driver.switch_to.default_content()
-        # print(json.dumps(strip_datetime_from(dropdowns_map), indent=2))
-        return dropdowns_map
+        return None
 
     def get_available_operating_systems(self) -> List[str]:
         """
@@ -526,36 +615,14 @@ class EC2DataCollector(DataCollector):
         NOTE: contains try/catch for self.driver
         NOTE: switches to iframe
         """
-        # @@@@ redundant with WHAT function ... ?
+        warnings.warn(
+            "get_available_operating_systems is deprecated: use self.operating_system_dropdown.options instead.",
+            DeprecationWarning,
+            stacklevel=1
+        )
         logger.debug("{} get available os".format(self._id))
-        try:
-            return self.dropdowns['Operating system']['options']
-            self.driver.switch_to.frame(self.iframe)
-            available_operating_systems = []
-            self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//*[@data-test='plc:OperatingSystem_single']")))
-            os_selection_box = self.driver.find_element(By.XPATH, "//*[@data-test='plc:OperatingSystem_single']")
-            # expand menu
-            os_selection_box.click()
-            # menu options
-            mystery_list = self.driver.find_element(By.TAG_NAME, 'ul')
-            raise SystemExit(16)
-
-            lis = mystery_list.find_elements(By.XPATH, "//*[@role='listbox']")
-            if len(lis) < 1:
-                logger.warning("No operating systems found")
-            for elem in lis:
-                if elem.text.count('\n') > 1:
-                    # operating system names are stored in a single HTML element as a newline-delimited list
-                    available_operating_systems = elem.text.split('\n')
-
-            os_selection_box.click()
-            self.wait_for_menus_to_close()
-            self.driver.switch_to.default_content()
-        except Exception as e:  # pragma: no cover
-            self.driver.close()
-            logger.error(e)
-            raise e
-        return available_operating_systems
+        # return self.dropdowns['Operating system']['options']
+        return self.operating_system_dropdown.options
 
     def select_operating_system(self, _os: str) -> str:
         """
@@ -568,22 +635,22 @@ class EC2DataCollector(DataCollector):
         try:
             self.driver.switch_to.frame(self.iframe)
 
-            os_selection_box = self.dropdowns['Operating system']['button']
-            os_selection_box.click()
+            self.operating_system_dropdown.button.click()
 
-            category_types_list = self.dropdowns['Operating system']['analytics_element'].find_element(By.XPATH, './/ul[@role="listbox"]')
-            lis = category_types_list.find_elements(By.TAG_NAME, "li")
+            lis = self.operating_system_dropdown.analytics_element.find_elements(By.XPATH, './/ul[@role="listbox"]/li')
+            # lis = category_types_list.find_elements(By.TAG_NAME, "li")
             for li in lis:
                 if _os in li.text:
                     li.click()
                     break
+            # self.wait_for_menus_to_close()
             self.driver.switch_to.default_content()
             return _os
+
         except Exception as e:  # pragma: no cover
             self.driver.close()
             logger.error(e)
             raise e
-        raise ScrprException("{} No such operating system: '{}'".format(self._id, _os))
 
     def get_available_regions(self) -> List[str]:
         """
@@ -592,12 +659,12 @@ class EC2DataCollector(DataCollector):
         NOTE: switches to iframe
         """
         warnings.warn(
-            "get_available_regions is deprecated: use self.dropdowns['Region']['options'] instead (stacklevel=1)",
+            "get_available_regions is deprecated: use self.region_dropdown.options instead.",
             DeprecationWarning,
             stacklevel=1
         )
         logger.debug("{} get available regions".format(self._id))
-        return self.dropdowns['Region']['options']
+        return self.region_dropdown.options
 
     def select_region(self, region: str):
         """
@@ -606,62 +673,23 @@ class EC2DataCollector(DataCollector):
         NOTE: switches to iframe
         """
         logger.debug("{} select region '{}'".format(self._id, region))
-        delay = 0
         try:
             self.driver.switch_to.frame(self.iframe)
 
-            self.dropdowns['Region']['button'].click()
-
-            category_types_list = self.dropdowns['Region']['analytics_element'].find_element(By.XPATH, './/ul[@role="listbox"]')
-            lis = category_types_list.find_elements(By.TAG_NAME, "li")
+            self.region_dropdown.button.click()
+            lis = self.region_dropdown.analytics_element.find_elements(By.XPATH, './/ul[@role="listbox"]/li')
             for li in lis:
                 if region in li.text:
                     li.click()
                     break
+            # self.wait_for_menus_to_close()
             self.driver.switch_to.default_content()
             return region
 
-            self.driver.switch_to.frame(self.iframe)
-            ################
-            # Location Type
-            ################
-            location_type_select_box = self.driver.find_element(By.ID, 'awsui-select-0')
-            location_type_select_box.click()
-            time.sleep(delay)
-
-            # what you have to click firt in order to show the dropdown
-            filter_selection = 'AWS Region'
-            all_filter_options = self.driver.find_element(By.ID, 'awsui-select-0-dropdown')
-            all_filter_options.find_element(By.XPATH, f'//*[ text() = "{filter_selection}"]').click()
-            self.wait_for_menus_to_close()
-            time.sleep(delay)
-
-            ################
-            # Region
-            ################
-            region_select_box = self.driver.find_element(By.ID, 'awsui-select-1-textbox')
-            region_select_box.click()
-            time.sleep(delay)
-            search_box = self.driver.find_element(By.ID, 'awsui-input-0')
-            search_box.send_keys(region)
-            time.sleep(delay)
-            for elem in self.driver.find_elements(By.CLASS_NAME, 'awsui-select-option-label-tag'):
-                if elem.text == region:
-                    logger.debug("{} Found region '{}'".format(self._id, elem.text))
-                    time.sleep(delay)
-                    elem.click()
-                    time.sleep(delay)
-                    self.wait_for_menus_to_close()
-                    self.driver.switch_to.default_content()
-                    logger.debug("{} Selected region '{}'".format(self._id, region))
-                    time.sleep(delay)
-                    return region
-            self.driver.switch_to.default_content()
         except Exception as e:  # pragma: no cover
             self.driver.close()
             logger.error(e)
             raise e
-        raise ScrprException("No such region: '{}'".format(region))
 
     def collect_ec2_data(self, _os: str, region: str) -> List[Instance]:
         """
@@ -677,6 +705,7 @@ class EC2DataCollector(DataCollector):
 
         raises: ScrprCritical
         """
+        global ROWS_COLLECTED
         delay = 0.5
         logger.debug(f"{self._id} scrape all: {region=} {_os=}")
         time.sleep(delay)
@@ -684,31 +713,40 @@ class EC2DataCollector(DataCollector):
         ########################
         # set table filters appropriately
         ########################
+        self.driver.switch_to.frame(self.iframe)
         try:
             logger.debug("{} selecting operating system...".format(self._id))
             time.sleep(delay)
             self.select_operating_system(_os)
+            self.operating_system_dropdown.button.click()
+            print('here')
+            self.operating_system_dropdown.options_list[_os].click()
             logger.debug("{} operating system selected.".format(self._id))
             time.sleep(delay)
             logger.debug("{} selecting region...".format(self._id))
             time.sleep(delay)
-            self.select_region(region)
+            # self.select_region(region)
+            self.region_dropdown.button.click()
+            self.region_dropdown.options_list[region].click()
             logger.debug("{} region selected, scraping...".format(self._id))
             time.sleep(delay)
+            print("-----------------------------MADE IT")
         except ScrprException:  # pragma: no cover
             logger.error("{} failed to select an operating system '{}' for region {}, this data will not be recorded if it exists!".format(self._id, _os, region), exc_info=True)
-            return None
+            return []
 
         try:
-            self.driver.switch_to.frame(self.iframe)
             rtn: List[PGInstance] = []
 
             logger.debug("{} resetting view port position...".format(self._id))
             self.scroll(-10000)
 
+            self.driver.switch_to.frame(self.iframe)
+
+            # voodoo
             logger.debug("{} scrolling table into view...".format(self._id))
-            self.scroll(self.table['header']['element'].location['y'])
-            self.scroll(self.table['header']['element'].size['height'] * 4)
+            self.scroll(self.table.header.element.location['y'])
+            self.scroll(self.table.header.element.size['height'] * 4)
             time.sleep(delay)
 
             # On EC2 pricing page:
@@ -717,35 +755,65 @@ class EC2DataCollector(DataCollector):
 #            pages = self.driver.find_element(By.CLASS_NAME, 'awsui-table-pagination-content').find_elements(By.TAG_NAME, "li")
 #            pages[1].click()  # make sure we're starting on page 1
 #            arrow_button = pages[-1].find_element(By.TAG_NAME, 'button')  # >
-            num_pages = self.table['get_total_pages']()
+            num_pages = self.table.get_total_pages()
+            validation_rows_scraped_per_page = {}
+            logger.debug(f"before nav to first page: {self.table.get_current_page()}")
+            # for some reason, pages like to start at 4 instead of 1, so we call this to make sure
+            self.table.navto_first_page()
+            logger.debug(f"after nav to first page: {self.table.get_current_page()}")
 
             #################
             # scrape
             #################
-            logger.debug("{} scraping {} pages for os: {} region {}...".format(self._id, num_pages, _os, region))
+
+            logger.info("{} scraping {} rows on {} pages for os: {} region {}...".format(self._id, self.table.rows.get_total_row_count(), num_pages, _os, region))
+            row_ct = 0
+            logger.debug(f"total row count: {self.table.rows.get_total_row_count()}")
+
             for i in range(num_pages):
-                logger.debug(f"scraping page {self.table['get_current_page']()}")
+                # logger.debug(f"scraping page {self.table['get_current_page']()}")  # trace
                 # navto next page only after the initial page is marshalled
                 if i > 0:
-                    logger.debug("{} clicking 'next' button".format(self._id))
-                    self.table['navto_next_page']()
+                    # logger.debug("{} clicking 'next' button".format(self._id))  # trace
+                    self.table.navto_next_page()
+
+                validation_current_page = self.table.get_current_page()
+                logger.debug(f"current page: {validation_current_page}")
+                logger.debug(f"rows on page: {self.table.rows.get_rows_count_on_page()}")
+                validation_rows_scraped_per_page[validation_current_page] = 0
+                # logger.debug("current page: {}".format(validation_current_page))  # trace
+
                 # exctract data from rows displayed
-                for row in self.table['rows']['get_rows']():
+                for row in self.table.rows.get_rows():
+                    row_ct += 1
+                    validation_rows_scraped_per_page[validation_current_page] += 1
                     instance_props = []
                     for col in row.find_elements(By.XPATH, './/td'):
                         instance_props.append(col.text)
                     rtn.append(PGInstance(self.human_date, region, _os, *instance_props))  # i hate my code
                 time.sleep(0.1)
 
-                # @@@
+            #################
+            # validation
+            #################
+            actual_rows_count = sum([int(v) for _, v in validation_rows_scraped_per_page.items()])
+            logger.debug(f"row count from summing page items: {actual_rows_count=}")
+            logger.debug(f"row count from iterating: {row_ct=}")
+            # requires risking introducing more errors, nah
+            # actual_pages_count = max(validation_rows_scraped_per_page.keys())
+            if actual_rows_count != len(rtn):
+                logger.error("scraped {} rows, but returning {}!".format(
+                    actual_rows_count, len(rtn)
+                ))
             logger.debug("{} resetting viewport before returning...".format(self._id))
             self.scroll(-10000)
             self.driver.switch_to.default_content()
+            ROWS_COLLECTED += len(rtn)
             return rtn
 
         except Exception as e:  # pragma: no cover
             logger.critical("worker {}: While scraping os '{}' for region '{}'. an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, _os, region, e), exc_info=True)
-            raise ScrprCritical("worker {}: While scraping os '{}' for region '{}'. an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, _os, region, e))
+            # raise ScrprCritical("worker {}: While scraping os '{}' for region '{}'. an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, _os, region, e))
 
     def store_postgres(self, instances: List[PGInstance], table='ec2_instance_pricing') -> Tuple[int, int]:
         """
@@ -846,27 +914,21 @@ class EC2DataCollector(DataCollector):
         This function is meant to be run in a ThreadDivvier singleton.
         NOTE: contains try/catch for self.driver
         """
+        global ROWS_STORED
         t_thread_start = int(time.time())
         logger.debug(f"{self._id} scrape and store: {region=} {_os=}")
         ################# # Scrape #################
-        try:
-            instances: List[PGInstance] = self.collect_ec2_data(_os=_os, region=region)
-        except ScrprException:  # pragma: no cover
-            logger.error("failed to acquire data")
-            _THREAD_RUN_TIMES.append({
-                'id': '-'.join(["ERROR", self.human_date, region, _os]),
-                'num_instances': len(instances),
-                't_run': int(time.time() - t_thread_start)
-            })
-            # logger.critical("\033[41madded thread metric '{}'\033[0m".format(('-'.join(["ERROR", self.human_date, region, _os]), 0, int(time.time() - t_thread_start))))
-            self.lock.release()
-            return False
+        instances: List[PGInstance] = self.collect_ec2_data(_os=_os, region=region)
 
         try:
             ################# # Postgres #################
             if self.db_config is not None:
                 stored_count, error_count = self.store_postgres(instances)
-                logger.debug("{} stored {}/{} records for {}: {} with {} errors.".format(self._id, stored_count, len(instances), region, _os, error_count))
+                ROWS_STORED += stored_count
+                if error_count > 0:
+                    logger.warning("{} stored {}/{} records for {}: {} with {} errors.".format(self._id, stored_count, len(instances), region, _os, error_count))
+                else:
+                    logger.debug("{} stored {}/{} records for {}: {} with {} errors.".format(self._id, stored_count, len(instances), region, _os, error_count))
             else:
                 logger.debug("{} skip saving to database".format(self._id))
 
@@ -931,20 +993,6 @@ class EC2DataCollector(DataCollector):
                     logger.warning("Drop-down menu is still visible ")
             return
 
-            # @@@ p sure this wprks now
-            raise SystemExit(1)
-
-            logger.debug("{} ensuring menus are closed".format(self._id))
-            # vCPU selection box
-            self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='vCPU_single']")))
-            # Instance Type selection box
-            self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='plc:InstanceFamily_single']")))
-            # Operating System selection box
-            self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//awsui-select[@data-test='plc:OperatingSystem_single']")))
-            # instance search bar
-            self.waiter.until(ec.visibility_of_element_located((By.ID, "awsui-input-1")))
-            # instance search paginator
-            self.waiter.until(ec.visibility_of_element_located((By.TAG_NAME, "awsui-table-pagination")))
         except Exception as e:  # pragma: no cover
             self.driver.close()
             logger.error("{} Error waiting for menus to close: {}".format(self._id, e), exc_info=True)
@@ -955,6 +1003,9 @@ class EC2DataCollector(DataCollector):
         """
         Uses DataCollectorConfig.db (db_config) to yield a connection to a Postgres database
         """
+        if self.db_config is None:
+            logger.debug("No db_config specified.")
+            return
         logger.debug("connecting to database with config: {}".format(self.db_config))
         conn = psycopg2.connect(
             self.db_config.get_dsl()
@@ -992,7 +1043,7 @@ def compress_data(csv_data_dir: str, data_type_scraped: str, human_date: str, rm
                     except Exception as e:  # pragma: no cover
                         errors = True
                         logger.error("Error writing compressed data: {}".format(e), exc_info=True)
-            logger.debug("Compressed {} files of {} os data".format(_csv_ct, os_name_dir.name))
+                logger.debug("Compressed {} files of {} os data".format(_csv_ct, os_name_dir.name))
     if not errors:
         if bkup_zip_file.exists():
             logger.debug("removing temporary backup '{}'".format(bkup_zip_file.absolute()))
@@ -1146,12 +1197,16 @@ def get_table_size(db_config: DatabaseConfig, table='ec2_instance_pricing') -> i
         conn = psycopg2.connect(db_config.get_dsl())
         curr = conn.cursor()
         curr.execute(s)
-        r = curr.fetchone()[0]
+        r = curr.fetchone()
+        if r is None:
+            logger.error("Couldn't get table size data. Check your db_config.")
+            raise ScrprException("Couldn't get table size data. Check your db_config.")
+        size_bytes = r[0]
         conn.close()
         logger.debug("'{}' table is {:.2f} Mb ({} bytes)".format(
-            table, r / 1024 / 1024, r
+            table, size_bytes / 1024 / 1024, size_bytes
         ))
-        return r
+        return size_bytes
     except Exception as e:
         logger.error("Could not retrieve size of table '{}': {}".format(table, e))
         return -1
@@ -1192,15 +1247,15 @@ class MetricData:
     """
     Run metadata stored after every successful run
     """
-    date: datetime = None
+    date: datetime.datetime
     threads: int = -2
-    oses: int = None
-    regions: int = None
+    oses: int = -1
+    regions: int = -1
     t_init: float = -2
     t_run: float = -2
     s_csv: float = -2
     s_db: float = -2
-    reported_errors: int = None
+    reported_errors: int = -2
     _command_line: dict = None
 
     def __init__(self, date):
@@ -1334,7 +1389,8 @@ def api_status_wrapper(f):
 
 @api_status_wrapper
 def main(args: MainConfig):  # noqa: C901
-    main_process = psutil.Process()  # noqa: F841
+    global ROWS_STORED, ROWS_COLLECTED
+    # main_process = psutil.Process()  # noqa: F841
 
     t_main = time.time()
     # set the collection date relative to time main() was called
@@ -1358,12 +1414,16 @@ def main(args: MainConfig):  # noqa: C901
 
     logger.warning("This program is still under development, log output may be ... less than scrupulous.")
     logger.info("Starting program with PID {}".format(os.getpid()))
+    logger.debug("datestamp : {}".format(datestamp))
+    logger.debug("human_date: {}".format(human_date))
+
+    # @@@ Always try and load database config
+    db_config = DatabaseConfig()
+    db_config.load()
 
     if args.check_size:
         s_db = -1
         try:
-            db_config = DatabaseConfig()
-            db_config.load()
             s_db = get_table_size(db_config)
             print("database:")
             print("{:.2f} MB".format(s_db / 1024 / 1024))
@@ -1381,8 +1441,6 @@ def main(args: MainConfig):  # noqa: C901
     # argparsing
     if args.store_db:
         metric_data.s_db = -1
-        db_config = DatabaseConfig()
-        db_config.load()
         conn = psycopg2.connect(db_config.get_dsl())
         conn.close()
         logger.debug("db connection ok")
@@ -1402,11 +1460,15 @@ def main(args: MainConfig):  # noqa: C901
         db_config=db_config,
     )
 
+    logger.debug("-----------------program args---------------------")
     for arg, val in vars(args).items():
         logger.debug("{}={} ({})".format(arg, val, type(val)))
+    logger.debug("-----------------program config-------------------")
     for k, v in config.__dict__.items():
-        logger.debug("{}={} ({})".format(k, v, type(val)))
+        logger.debug("{}={} ({})".format(k, v, type(v)))
+    logger.debug("-----------------db config------------------------")
     logger.debug("{}".format(str(db_config)))
+    logger.debug("--------------------------------------------------")
 
     # argparsing
     if args.store_db:
@@ -1420,8 +1482,8 @@ def main(args: MainConfig):  # noqa: C901
     set_api_status("collecting available regions and operating systems")
     # logger.critical(f"\033[44mmem before region/os collection: {main_process.memory_info().rss}\033[0m")
     os_region_collector = EC2DataCollector('os_region_collector', config=config)
-    tgt_oses = os_region_collector.get_available_operating_systems()
-    tgt_regions = os_region_collector.get_available_regions()
+    tgt_oses = os_region_collector.operating_system_dropdown.options
+    tgt_regions = os_region_collector.region_dropdown.options
     # logger.critical(f"\033[44mmem after region/os collection: {main_process.memory_info().rss}\033[0m")
     # argparsing
     if args.get_operating_systems:
@@ -1540,6 +1602,8 @@ def main(args: MainConfig):  # noqa: C901
     for e in ERRORS:
         logger.error(e)
     logger.debug('---------------------------------------------------')
+    print(f"{ROWS_COLLECTED=}")
+    print(f"{ROWS_STORED=}")
 
     conn = psycopg2.connect(db_config.get_dsl())
     curr = conn.cursor()
