@@ -695,7 +695,6 @@ class EC2DataCollector(DataCollector):
         Select an operating system and region to fill the pricing page table with data, scrape it, and save it to a csv file.
         CSV files are saved in a parent directory of self.csv_data_dir, by date then by operating system. e.g. '<self.csv_data_dir>/2023-01-18/Linux'
         NOTE: contains try/catch for self.driver
-        NOTE: switches to iframe
 
         NOTE: Fails for small browser sizes
 
@@ -704,42 +703,49 @@ class EC2DataCollector(DataCollector):
 
         raises: ScrprCritical
         """
-        global ROWS_COLLECTED
         delay = 0.5
         logger.debug(f"{self._id} scrape all: {region=} {_os=}")
-        time.sleep(delay)
+        # time.sleep(delay)
 
         ########################
         # set table filters appropriately
         ########################
         try:
             logger.debug("{} selecting operating system...".format(self._id))
-            time.sleep(delay)
-            self.select_operating_system(_os)
+            # self.select_operating_system(_os)
+            self.operating_system_dropdown.select(_os)
             logger.debug("{} operating system selected.".format(self._id))
             time.sleep(delay)
             logger.debug("{} selecting region...".format(self._id))
-            time.sleep(delay)
-            self.select_region(region)
+            # self.select_region(region)
+            self.region_dropdown.select(region)
             logger.debug("{} region selected, scraping...".format(self._id))
             time.sleep(delay)
-        except ScrprException:  # pragma: no cover
-            logger.error("{} failed to select an operating system '{}' for region {}, this data will not be recorded if it exists!".format(self._id, _os, region), exc_info=True)
-            return []
-
-        try:
-            rtn: List[PGInstance] = []
 
             logger.debug("{} resetting view port position...".format(self._id))
             self.scroll(-10000)
 
-            self.driver.switch_to.frame(self.iframe)
 
-            # voodoo
-            logger.debug("{} scrolling table into view...".format(self._id))
-            self.scroll(self.table.header.element.location['y'])
-            self.scroll(self.table.header.element.size['height'] * 4)
-            time.sleep(delay)
+        except ScrprException:  # pragma: no cover
+            logger.error("{} failed to select an operating system '{}' for region {}, this data will not be recorded if it exists!".format(self._id, _os, region), exc_info=True)
+            return []
+        return self.collect_table_row_data(_os, region)
+
+    def collect_table_row_data(self, _os: str, region: str) -> List[Instance]:
+        """
+        NOTE: switches to iframe
+        """
+        global ROWS_COLLECTED
+        # delay = 0.5
+        # # voodoo
+        # logger.debug("{} scrolling table into view...".format(self._id))
+        # self.scroll(self.table.header.element.location['y'])
+        # self.scroll(self.table.header.element.size['height'] * 4)
+        # time.sleep(delay)
+        try:
+            rtn: List[PGInstance] = []
+
+            self.driver.switch_to.frame(self.iframe)
 
             num_pages = self.table.get_total_pages()
             validation_rows_scraped_per_page = {}
@@ -747,10 +753,6 @@ class EC2DataCollector(DataCollector):
             # for some reason, pages like to start at 4 instead of 1, so we call this to make sure
             self.table.navto_first_page()
             logger.debug(f"after nav to first page: {self.table.get_current_page()}")
-
-            #################
-            # scrape
-            #################
 
             logger.info("{} scraping {} rows on {} pages for os: {} region {}...".format(self._id, self.table.rows.get_total_row_count(), num_pages, _os, region))
             row_ct = 0
