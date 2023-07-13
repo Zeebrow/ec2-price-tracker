@@ -349,43 +349,49 @@ class DataCollector:
 
 
 class EC2TableBase:
-    def __init__(self, driver, iframe) -> None:
+    # def __init__(self, driver: WebDriver, iframe: WebElement) -> None:
+    def __init__(self, driver: WebDriver, data_selection_root: WebElement) -> None:
         self.driver = driver
-        self.iframe = iframe
-        self.data_selection_root = self._get_data_selection_root()
+        # self.iframe = iframe
+        # self.data_selection_root = self._get_data_selection_root()
+        self.data_selection_root = data_selection_root
 
     def _get_data_selection_root(self):
-        """ Each element we care about scraping has a data-selection-root attribute.  """
-        self.driver.switch_to.frame(self.iframe)
+        """
+        Speeds up find_element(s) operations by minimizing the surface area to scrape.
+        """
+        # self.driver.switch_to.frame(self.iframe)
         rtn = self.driver.find_element(By.XPATH, "//*[@data-selection-root]")
-        self.driver.switch_to.default_content()
+        # self.driver.switch_to.default_content()
         return rtn
 
 
 class EC2Table(EC2TableBase):
 
+    def __init__(self, driver: WebDriver, data_selection_root: WebElement):
+        super().__init__(driver, data_selection_root)
+        self.header = self.Header(driver)
+        self.rows = self.Rows(driver)
+
     class Header(EC2TableBase):
         """ Represents the clickable header of the EC2 pricing table.  """
-        def __init__(self, driver, iframe) -> None:
-            super().__init__(driver, iframe)
+        def __init__(self, driver) -> None:
+            super().__init__(driver)
             self.element = self.get_element()
 
         def get_element(self) -> WebElement:
             """requires switching to iframe"""
-            self.driver.switch_to.frame(self.iframe)
-            # @@ can selenium determine if the iframe is selected?
-            # print(f"{self.driver.current_window_handle=}")
+            # self.driver.switch_to.frame(self.iframe)
             rtn = self.data_selection_root.find_element(By.XPATH, './/table/thead/tr')
-            self.driver.switch_to.default_content()
-            # print(f"{self.driver.current_window_handle=}")
+            # self.driver.switch_to.default_content()
             return rtn
 
     class Rows(EC2TableBase):
         """
         Reporesents where all the juicy data lives. The big kahuna, if you will.
         """
-        def __init__(self, driver, iframe) -> None:
-            super().__init__(driver, iframe)
+        def __init__(self, driver) -> None:
+            super().__init__(driver)
 
         def get_rows(self) -> List[WebElement]:
             """requires switching to iframe"""
@@ -399,11 +405,6 @@ class EC2Table(EC2TableBase):
         def get_rows_count_on_page(self) -> int:
             """requires switching to iframe"""
             return len([tr for tr in self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')])
-
-    def __init__(self, driver, iframe):
-        super().__init__(driver, iframe)
-        self.header = self.Header(driver, iframe)
-        self.rows = self.Rows(driver, iframe)
 
     def get_current_page(self) -> int:
         """ requires switching to iframe """
@@ -422,9 +423,9 @@ class EC2Table(EC2TableBase):
         self.data_selection_root.find_element(By.XPATH, './/ul/li[last()]').click()
 
 class EC2Dropdown:
-    def __init__(self, driver: WebDriver, iframe: WebElement):
+    def __init__(self, driver: WebDriver):
         self.driver: WebDriver = driver
-        self.iframe: WebElement = iframe
+        # self.iframe: WebElement = iframe
         self.analytics_element: Optional[WebElement] = None
         self.button: Optional[WebElement] = None
         self.options: List[str] = []
@@ -432,44 +433,47 @@ class EC2Dropdown:
     def current_value(self):
         return self.button.text
 
-    def select(self, selection: str) -> None:
-        logger.debug("select {} '{}'".format(self.__class__.__name__, selection))
+    def select(self, selection: str, delay: Optional[float] = None) -> None:
+        logger.debug("{} '{}'".format(self.__class__.__name__, selection))
         try:
-            self.driver.switch_to.frame(self.iframe)
+            # self.driver.switch_to.frame(self.iframe)
             self.button.click()
+            if delay is not None:
+                time.sleep(delay)
             lis = self.analytics_element.find_elements(By.XPATH, './/ul[@role="listbox"]/li')
             for li in lis:
                 if selection in li.text:
                     li.click()
                     break
-            self.driver.switch_to.default_content()
+            # self.driver.switch_to.default_content()
             return
 
         except Exception as e:  # pragma: no cover
             self.driver.quit()
             logger.error(e)
             # @@ do we need to raise?
+            # note removed try/catch in collect_ec2_data()
             raise
 
 class EC2LocationType(EC2Dropdown):
-    def __init__(self, driver: WebDriver, iframe: WebElement):
-        super().__init__(driver, iframe)
+    def __init__(self, driver: WebDriver):
+        super().__init__(driver)
 
 class EC2Region(EC2Dropdown):
-    def __init__(self, driver: WebDriver, iframe: WebElement):
-        super().__init__(driver, iframe)
+    def __init__(self, driver: WebDriver):
+        super().__init__(driver)
 
 class EC2OperatingSystem(EC2Dropdown):
-    def __init__(self, driver: WebDriver, iframe: WebElement):
-        super().__init__(driver, iframe)
+    def __init__(self, driver: WebDriver):
+        super().__init__(driver)
 
 class EC2InstanceType(EC2Dropdown):
-    def __init__(self, driver: WebDriver, iframe: WebElement):
-        super().__init__(driver, iframe)
+    def __init__(self, driver: WebDriver):
+        super().__init__(driver)
 
 class EC2CpuCount(EC2Dropdown):
-    def __init__(self, driver: WebDriver, iframe: WebElement):
-        super().__init__(driver, iframe)
+    def __init__(self, driver: WebDriver):
+        super().__init__(driver)
 
 
 class EC2DataCollector(DataCollector):
@@ -485,7 +489,6 @@ class EC2DataCollector(DataCollector):
         self.url = config.url
         if _test_driver is None:
             self.prep_driver()
-        self._in_iframe = False
         self.region_dropdown = None
         self.instance_type_dropdown = None
         self.operating_system_dropdown = None
@@ -494,8 +497,12 @@ class EC2DataCollector(DataCollector):
         # @@ this is slow and gets called twice
         # once when building the list of arguments for threads,
         # and again when initializing each driver in the threads.
+        self.driver.switch_to.frame(self.iframe)
+        dsr = self.driver.find_element(By.XPATH, "//*[@data-selection-root]")
+        self.driver.switch_to.default_content()
+        print(dsr)
         self.get_dropdown_menus()
-        self.table = EC2Table(self.driver, self.iframe)
+        self.table = EC2Table(self.driver, dsr)
         self.lock.release()
 
     def prep_driver(self):
@@ -600,27 +607,27 @@ class EC2DataCollector(DataCollector):
             # I sense a software design pattern going *woosh*
             match category_text_elem.text:
                 case 'Region':
-                    self.region_dropdown = EC2Region(self.driver, self.iframe)
+                    self.region_dropdown = EC2Region(self.driver)
                     self.region_dropdown.button = button_click_elem
                     self.region_dropdown.analytics_element = dad
                     self.region_dropdown.options = options
                 case 'Operating system':
-                    self.operating_system_dropdown = EC2OperatingSystem(self.driver, self.iframe)
+                    self.operating_system_dropdown = EC2OperatingSystem(self.driver)
                     self.operating_system_dropdown.button = button_click_elem
                     self.operating_system_dropdown.analytics_element = dad
                     self.operating_system_dropdown.options = options
                 case 'Instance type':
-                    self.instance_type_dropdown = EC2InstanceType(self.driver, self.iframe)
+                    self.instance_type_dropdown = EC2InstanceType(self.driver)
                     self.instance_type_dropdown.button = button_click_elem
                     self.instance_type_dropdown.analytics_element = dad
                     self.instance_type_dropdown.options = options
                 case 'vCPU':  # not something we filter based on
-                    self.cpu_dropdown = EC2CpuCount(self.driver, self.iframe)
+                    self.cpu_dropdown = EC2CpuCount(self.driver)
                     self.cpu_dropdown.button = button_click_elem
                     self.cpu_dropdown.analytics_element = dad
                     self.cpu_dropdown.options = options
                 case 'Location Type':  # always "AWS Region"
-                    self.location_type_dropdown = EC2LocationType(self.driver, self.iframe)
+                    self.location_type_dropdown = EC2LocationType(self.driver)
                     self.location_type_dropdown.button = button_click_elem
                     self.location_type_dropdown.analytics_element = dad
                     self.location_type_dropdown.options = options
