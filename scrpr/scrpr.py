@@ -453,7 +453,6 @@ class EC2Dropdown:
 class EC2LocationType(EC2Dropdown):
     def __init__(self, driver: WebDriver, iframe: WebElement):
         super().__init__(driver, iframe)
-        raise NotImplementedError
 
 class EC2Region(EC2Dropdown):
     def __init__(self, driver: WebDriver, iframe: WebElement):
@@ -470,7 +469,6 @@ class EC2InstanceType(EC2Dropdown):
 class EC2CpuCount(EC2Dropdown):
     def __init__(self, driver: WebDriver, iframe: WebElement):
         super().__init__(driver, iframe)
-        raise NotImplementedError
 
 
 class EC2DataCollector(DataCollector):
@@ -616,11 +614,17 @@ class EC2DataCollector(DataCollector):
                     self.instance_type_dropdown.analytics_element = dad
                     self.instance_type_dropdown.options = options
                 case 'vCPU':  # not something we filter based on
-                    pass
+                    self.cpu_dropdown = EC2CpuCount(self.driver, self.iframe)
+                    self.cpu_dropdown.button = button_click_elem
+                    self.cpu_dropdown.analytics_element = dad
+                    self.cpu_dropdown.options = options
                 case 'Location Type':  # always "AWS Region"
-                    pass
+                    self.location_type_dropdown = EC2LocationType(self.driver, self.iframe)
+                    self.location_type_dropdown.button = button_click_elem
+                    self.location_type_dropdown.analytics_element = dad
+                    self.location_type_dropdown.options = options
                 case _:
-                    logger.debug(f"unsupported filter category: {category_text_elem.text}")
+                    logger.warning(f"unsupported filter category: {category_text_elem.text}")
 
             # once finished, click button again to hide menu
             button_click_elem.click()
