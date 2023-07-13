@@ -350,28 +350,21 @@ class DataCollector:
 
 class EC2DataCollectionElementBase:
     # def __init__(self, driver: WebDriver, iframe: WebElement) -> None:
-    def __init__(self, driver: WebDriver, data_selection_root: WebElement) -> None:
+    def __init__(self, driver: WebDriver) -> None:
         self.driver = driver
-        # self.iframe = iframe
-        # self.data_selection_root = self._get_data_selection_root()
-        self.data_selection_root = data_selection_root
+        self.data_selection_root = self._get_data_selection_root()
 
     def _get_data_selection_root(self):
-        """
-        Speeds up find_element(s) operations by minimizing the surface area to scrape.
-        """
-        # self.driver.switch_to.frame(self.iframe)
-        rtn = self.driver.find_element(By.XPATH, "//*[@data-selection-root]")
-        # self.driver.switch_to.default_content()
-        return rtn
+        """ Speeds up find_element(s) operations by minimizing the surface area to scrape.  """
+        return self.driver.find_element(By.XPATH, "//*[@data-selection-root]")
 
 
 class EC2Table(EC2DataCollectionElementBase):
 
-    def __init__(self, driver: WebDriver, data_selection_root: WebElement) -> None:
-        super().__init__(driver, data_selection_root)
-        self.header = Header(driver, data_selection_root)
-        self.rows = Rows(driver, data_selection_root)
+    def __init__(self, driver: WebDriver) -> None:
+        super().__init__(driver)
+        self.header = Header(driver)
+        self.rows = Rows(driver)
 
     def get_current_page(self) -> int:
         """ requires switching to iframe """
@@ -392,23 +385,20 @@ class EC2Table(EC2DataCollectionElementBase):
 
 class Header(EC2DataCollectionElementBase):
     """ Represents the clickable header of the EC2 pricing table.  """
-    def __init__(self, driver: WebDriver, data_selection_root: WebElement) -> None:
-        super().__init__(driver, data_selection_root)
+    def __init__(self, driver: WebDriver) -> None:
+        super().__init__(driver)
         self.element = self.get_element()
 
     def get_element(self) -> WebElement:
         """requires switching to iframe"""
-        # self.driver.switch_to.frame(self.iframe)
-        rtn = self.data_selection_root.find_element(By.XPATH, './/table/thead/tr')
-        # self.driver.switch_to.default_content()
-        return rtn
+        return self.data_selection_root.find_element(By.XPATH, './/table/thead/tr')
 
 class Rows(EC2DataCollectionElementBase):
     """
     Reporesents where all the juicy data lives. The big kahuna, if you will.
     """
-    def __init__(self, driver: WebDriver, data_selection_root: WebElement) -> None:
-        super().__init__(driver, data_selection_root)
+    def __init__(self, driver: WebDriver) -> None:
+        super().__init__(driver)
 
     def get_rows(self) -> List[WebElement]:
         """requires switching to iframe"""
@@ -427,7 +417,6 @@ class Rows(EC2DataCollectionElementBase):
 class EC2Dropdown:
     def __init__(self, driver: WebDriver):
         self.driver: WebDriver = driver
-        # self.iframe: WebElement = iframe
         self.analytics_element: Optional[WebElement] = None
         self.button: Optional[WebElement] = None
         self.options: List[str] = []
@@ -438,7 +427,6 @@ class EC2Dropdown:
     def select(self, selection: str, delay: Optional[float] = None) -> None:
         logger.debug("{} '{}'".format(self.__class__.__name__, selection))
         try:
-            # self.driver.switch_to.frame(self.iframe)
             self.button.click()
             if delay is not None:
                 time.sleep(delay)
@@ -447,7 +435,6 @@ class EC2Dropdown:
                 if selection in li.text:
                     li.click()
                     break
-            # self.driver.switch_to.default_content()
             return
 
         except Exception as e:  # pragma: no cover
@@ -496,15 +483,13 @@ class EC2DataCollector(DataCollector):
         self.operating_system_dropdown = None
         self.location_type_dropdown = None
         self.cpu_dropdown = None
+        self.driver.switch_to.frame(self.iframe)
+        self.table = EC2Table(self.driver)
         # @@ this is slow and gets called twice
         # once when building the list of arguments for threads,
         # and again when initializing each driver in the threads.
-        self.driver.switch_to.frame(self.iframe)
-        dsr = self.driver.find_element(By.XPATH, "//*[@data-selection-root]")
-        print(dsr)
-        self.table = EC2Table(self.driver, dsr)
-        self.driver.switch_to.default_content()
         self.get_dropdown_menus()
+        self.driver.switch_to.default_content()
         self.lock.release()
 
     def prep_driver(self):
@@ -546,7 +531,6 @@ class EC2DataCollector(DataCollector):
 
         switches to iframe
         """
-        self.driver.switch_to.frame(self.iframe)
 
         # sift through and find the key terms we can filter on
         data_analytics_divs = self._get_data_analytics_divs()
@@ -638,8 +622,6 @@ class EC2DataCollector(DataCollector):
 
             # once finished, click button again to hide menu
             button_click_elem.click()
-            logger.info("please clap")
-        self.driver.switch_to.default_content()
         return None
 
     def get_available_operating_systems(self) -> List[str]:
@@ -716,6 +698,7 @@ class EC2DataCollector(DataCollector):
         """
 
         global ROWS_COLLECTED
+        self.driver.switch_to.frame(self.iframe)
         # delay = 0.5
         # # voodoo
         # logger.debug("{} scrolling table into view...".format(self._id))
@@ -728,7 +711,6 @@ class EC2DataCollector(DataCollector):
             rtn: List[PGInstance] = []
 
             # set table filters appropriately
-            self.driver.switch_to.frame(self.iframe)
             self.operating_system_dropdown.select(_os, delay=delay)
             self.region_dropdown.select(region, delay=delay)
 
