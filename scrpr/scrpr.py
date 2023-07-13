@@ -713,24 +713,17 @@ class EC2DataCollector(DataCollector):
         ########################
         # set table filters appropriately
         ########################
-        self.driver.switch_to.frame(self.iframe)
         try:
             logger.debug("{} selecting operating system...".format(self._id))
             time.sleep(delay)
             self.select_operating_system(_os)
-            self.operating_system_dropdown.button.click()
-            print('here')
-            self.operating_system_dropdown.options_list[_os].click()
             logger.debug("{} operating system selected.".format(self._id))
             time.sleep(delay)
             logger.debug("{} selecting region...".format(self._id))
             time.sleep(delay)
-            # self.select_region(region)
-            self.region_dropdown.button.click()
-            self.region_dropdown.options_list[region].click()
+            self.select_region(region)
             logger.debug("{} region selected, scraping...".format(self._id))
             time.sleep(delay)
-            print("-----------------------------MADE IT")
         except ScrprException:  # pragma: no cover
             logger.error("{} failed to select an operating system '{}' for region {}, this data will not be recorded if it exists!".format(self._id, _os, region), exc_info=True)
             return []
@@ -749,12 +742,6 @@ class EC2DataCollector(DataCollector):
             self.scroll(self.table.header.element.size['height'] * 4)
             time.sleep(delay)
 
-            # On EC2 pricing page:
-            # page numbers (1, 2, 3, (literal)..., last, >)
-            # changes as buttons are pressed
-#            pages = self.driver.find_element(By.CLASS_NAME, 'awsui-table-pagination-content').find_elements(By.TAG_NAME, "li")
-#            pages[1].click()  # make sure we're starting on page 1
-#            arrow_button = pages[-1].find_element(By.TAG_NAME, 'button')  # >
             num_pages = self.table.get_total_pages()
             validation_rows_scraped_per_page = {}
             logger.debug(f"before nav to first page: {self.table.get_current_page()}")
