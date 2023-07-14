@@ -152,7 +152,9 @@ def runtime_averages(env_file=".env"):
     query = sql.SQL("""\
             SELECT threads, t_run
             FROM {}
-            where date != '1999-12-31' AND (regions > 27) AND (oses > 16)
+            where (date != '1999-12-31') AND
+            s_csv != 0 AND s_db != 0 AND
+            (oses >= 16) AND (regions >= 20)
             ORDER BY threads ASC
             """.format(table_name))
     conn = get_conn(env_file)
