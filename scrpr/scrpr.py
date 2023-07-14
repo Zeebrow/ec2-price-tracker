@@ -52,32 +52,23 @@ logger = logging.getLogger(__name__)
 
 
 """
-Scrapes pricing information for EC2 instance types for available regions.
+Scrapes pricing information for EC2 instance types for available regions and operating systems.
 """
-ERRORS = []
 SCRPR_HOME = os.path.join(os.path.expanduser('~'), '.local', 'share', 'scrpr')
 # this is overridable with the flag --csv-data-dir
 DEFAULT_CSV_DATA_DIR = os.path.join(SCRPR_HOME, "csv-data")
 DEFAULT_METRICS_DATA_FILE = os.path.join(SCRPR_HOME, "metric-data.txt")
 DEFAULT_LOG_FILE = os.path.join(SCRPR_HOME, "logs", "scrpr.log")
+
+ERRORS = []
 _THREAD_RUN_TIMES = []
 ROWS_COLLECTED = 0
 ROWS_STORED = 0
 ROWS_ALREADY_EXISTED = 0
 
-####################### memory stuf
-TOTAL_MEM_SYS = psutil.virtual_memory().total
-FREE_MEM_SYS = psutil.virtual_memory().free
-MAIN_PROCESS = psutil.Process()
-INITIAL_MEM = MAIN_PROCESS.memory_info()
-
-
-#######################
-
 ###############################################################################
 # classes and functions
 ###############################################################################
-
 
 def set_api_status(status: str):
     try:
@@ -214,7 +205,6 @@ class ThreadDivvier:
             d = EC2DataCollector(_id=thread_id, config=config)
 
             # after = psutil.Process().memory_info().rss
-            # logger.critical(f"\033[44m{thread_id} {after=}\033[0m")
             # print("change = {}".format(after.rss - before.rss))
 
             self.drivers.append(d)
@@ -300,7 +290,12 @@ class ThreadDivvier:
                 # This will cause the script to hang after it is done running, at least.
                 if not d.lock.locked() and d._id not in threads_finished:
                     threads_finished.append(d._id)
+                    logger.debug("Quitting driver {}/{}".format(
+                        len(threads_finished) - len(self.thread_count),
+                        len(self.thread_count)
+                    ))
                     d.driver.quit()
+                    logger.debug("Quit driver {} successfully.".format(d._id))
         return
 
 
@@ -478,18 +473,18 @@ class EC2DataCollector(DataCollector):
         self.url = config.url
         if _test_driver is None:
             self.prep_driver()
+
+        self.driver.switch_to.frame(self.iframe)
+        self.table = EC2Table(self.driver)
+
         self.region_dropdown = None
         self.instance_type_dropdown = None
         self.operating_system_dropdown = None
         self.location_type_dropdown = None
         self.cpu_dropdown = None
-        self.driver.switch_to.frame(self.iframe)
-        self.table = EC2Table(self.driver)
-        # @@ this is slow and gets called twice
-        # once when building the list of arguments for threads,
-        # and again when initializing each driver in the threads.
         self.get_dropdown_menus()
         self.driver.switch_to.default_content()
+
         self.lock.release()
 
     def prep_driver(self):
@@ -511,6 +506,10 @@ class EC2DataCollector(DataCollector):
             raise ScrprCritical("While initializing worker '{}', an exception occurred which requires closing the Selenium WebDriver: {}")
 
     def _get_data_analytics_divs(self) -> List[WebElement]:
+        """
+        Find all "analytics divs" in the DOM.
+        For now these are only found in the EC2 pricing table section
+        """
         # voodoo?
         self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//*[@data-analytics-field-label]")))
         data_analytics_divs = self.driver.find_elements(By.XPATH, "//*[@data-analytics-field-label]")
@@ -532,9 +531,9 @@ class EC2DataCollector(DataCollector):
         switches to iframe
         """
 
-        # sift through and find the key terms we can filter on
         data_analytics_divs = self._get_data_analytics_divs()
 
+        # sift through and find the key terms we can filter on
         for dad in data_analytics_divs:
             # find all clickable drop-down menus by using very, very conveniently attributed divs
             # amazon watching us watch them...
@@ -902,9 +901,6 @@ class EC2DataCollector(DataCollector):
                 'num_instances': len(instances),
                 't_run': t_run
             })
-            # logger.critical("\033[42m(good)\033[0m added thread metric '{}' \033[104m{}/{}s = {}\033[0m".format(
-            #     '-'.join([self.human_date, region, _os]), len(instances), t_run, len(instances) / t_run
-            # ))
             self.lock.release()
             return True
 
@@ -915,10 +911,10 @@ class EC2DataCollector(DataCollector):
                 'num_instances': len(instances),
                 't_run': int(time.time() - t_thread_start)
             })
-            # logger.critical("\033[41madded thread metric {} \033[104m{}\033[0m".format(('-'.join(["ERROR", self.human_date, region, _os]), len(instances), int(time.time() - t_thread_start)), int(time.time() - t_thread_start)))
             self.lock.release()
             raise ScrprException("worker {}: While storing data for os '{}' for region '{}', an exception occurred which may result in dataloss: {}".format(self._id, _os, region, e))
 
+    # @@@ unused
     def get_result_count_test(self) -> int:
         """
         get the 'Viewing ### of ### Available Instances' count to check our results
@@ -937,6 +933,7 @@ class EC2DataCollector(DataCollector):
             raise e
         return int(t.split("of")[1].split(" available")[0].strip())
 
+    # @@@ unused
     def wait_for_menus_to_close(self):
         """
         Blocks until any of the clickable dialog boxes in this script have returned to a collapsed state before returning.
@@ -1285,6 +1282,7 @@ class MetricData:
             logger.warning("Error saving metric data to database: {}".format(e))
             return False
 
+    # @@@ unused
     def store_csv(self, filename=DEFAULT_METRICS_DATA_FILE) -> bool:
         """
         Save metrics data in csv format to METRICS_DATA_FILE
@@ -1336,7 +1334,6 @@ def get_date():
 
 
 def api_status_wrapper(f):
-    # atexit.register(exit_func)
     def wrapper(*args, **kwargs):
         set_api_status("starting")
         f(*args, **kwargs)
@@ -1347,7 +1344,6 @@ def api_status_wrapper(f):
 @api_status_wrapper
 def main(args: MainConfig):  # noqa: C901
     global ROWS_STORED, ROWS_COLLECTED
-    # main_process = psutil.Process()  # noqa: F841
 
     t_main = time.time()
     # set the collection date relative to time main() was called
@@ -1367,7 +1363,6 @@ def main(args: MainConfig):  # noqa: C901
         follow=args.follow,
         log_file=args.log_file
     )
-    # logger.critical(f"\033[44mmain mem: {main_process.memory_info().rss}\033[0m")
 
     logger.warning("This program is still under development, log output may be ... less than scrupulous.")
     logger.info("Starting program with PID {}".format(os.getpid()))
@@ -1437,11 +1432,9 @@ def main(args: MainConfig):  # noqa: C901
     # regions and operating systems
     ##########################################################################
     set_api_status("collecting available regions and operating systems")
-    # logger.critical(f"\033[44mmem before region/os collection: {main_process.memory_info().rss}\033[0m")
     os_region_collector = EC2DataCollector('os_region_collector', config=config)
     tgt_oses = os_region_collector.operating_system_dropdown.options
     tgt_regions = os_region_collector.region_dropdown.options
-    # logger.critical(f"\033[44mmem after region/os collection: {main_process.memory_info().rss}\033[0m")
     # argparsing
     if args.get_operating_systems:
         logger.debug("tgt_oses = {}".format(tgt_oses))
@@ -1455,7 +1448,6 @@ def main(args: MainConfig):  # noqa: C901
         for r in tgt_regions:
             print(f"\t{r}")
     os_region_collector.driver.quit()
-    # logger.critical(f"\033[44mmem after region/os collection close: {main_process.memory_info().rss}\033[0m")
     # argparsing
     if args.get_operating_systems or args.get_regions:
         exit(0)
@@ -1508,20 +1500,15 @@ def main(args: MainConfig):  # noqa: C901
     logger.debug("thread targets ({}) = {}".format(len(thread_tgts), thread_tgts))
 
     metric_data.t_init = 0
-    # logger.critical(f"\033[44mmem before ThreadDivvier init: {main_process.memory_info().rss}\033[0m")
     thread_thing = ThreadDivvier(thread_count=num_threads)
-    # logger.critical(f"\033[44mmem before init_scrapers: {main_process.memory_info().rss}\033[0m")
     thread_thing.init_scrapers_of(config=config)
-    # memory_profiler.memory_usage((thread_thing.init_scrapers_of, (config,), {}))
 
-    # logger.critical(f"\033[44mmem after init_scrapers: {main_process.memory_info().rss}\033[0m")
     t_prog_init = time.time() - t_main
     metric_data.t_init = t_prog_init
     logger.debug("Initialized in {}".format(seconds_to_timer(time.time() - t_main)))
 
     # blocks until all threads have finished running, and thread_tgts is exhausted
     thread_thing.run_threads(thread_tgts)
-    # logger.critical(f"\033[44mmem after scrapers ran: {main_process.memory_info().rss}\033[0m")
 
     ##########################################################################
     # after data has been collected
@@ -1558,13 +1545,10 @@ def main(args: MainConfig):  # noqa: C901
     for n, e in enumerate(ERRORS):
         logger.error("{}) {}".format(n+1, e))
     logger.debug('-----------------sanity check----------------------')
-    print(f"{ROWS_COLLECTED=}")
-    print(f"{ROWS_STORED=}")
-    print(f"{ROWS_ALREADY_EXISTED=}")
-    try:
-        print(f"{ROWS_STORED + ROWS_ALREADY_EXISTED == ROWS_COLLECTED=}")
-    except:
-        print("check yer f string")
+    logger.debug(f"{ROWS_COLLECTED=}")
+    logger.debug(f"{ROWS_STORED=}")
+    logger.debug(f"{ROWS_ALREADY_EXISTED=}")
+    logger.info(f"{ROWS_STORED + ROWS_ALREADY_EXISTED == ROWS_COLLECTED=}")
 
     conn = psycopg2.connect(db_config.get_dsl())
     curr = conn.cursor()
@@ -1592,10 +1576,3 @@ def main(args: MainConfig):  # noqa: C901
     with open('1999-01-01' + "-thread-metrics-" + ".txt", 'a') as f:
         for thread_run_time in _THREAD_RUN_TIMES:
             csv.DictWriter(f, fieldnames=['id', 'num_instances', 't_run'], delimiter='\t').writerow(thread_run_time)
-
-
-# if __name__ == '__main__':
-#     import sys
-#     cli_args = do_args(sys.argv[1:])
-#     args = MainConfig(**cli_args.__dict__)
-#     raise SystemExit(main(args))
