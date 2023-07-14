@@ -291,8 +291,8 @@ class ThreadDivvier:
                 if not d.lock.locked() and d._id not in threads_finished:
                     threads_finished.append(d._id)
                     logger.debug("Quitting driver {}/{}".format(
-                        len(threads_finished) - len(self.thread_count),
-                        len(self.thread_count)
+                        len(threads_finished) - self.thread_count,
+                        self.thread_count
                     ))
                     d.driver.quit()
                     logger.debug("Quit driver {} successfully.".format(d._id))
@@ -347,6 +347,7 @@ class EC2DataCollectionElementBase:
     # def __init__(self, driver: WebDriver, iframe: WebElement) -> None:
     def __init__(self, driver: WebDriver) -> None:
         self.driver = driver
+        self.waiter = WebDriverWait(self.driver, 3.0)
         self.data_selection_root = self._get_data_selection_root()
 
     def _get_data_selection_root(self):
@@ -397,6 +398,9 @@ class Rows(EC2DataCollectionElementBase):
 
     def get_rows(self) -> List[WebElement]:
         """requires switching to iframe"""
+        logger.debug("waiting for rows...")
+        self.waiter.until(ec.visibility_of_all_elements_located((By.XPATH, './/table/tbody/tr')))
+        logger.debug("done")
         return [tr for tr in self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')]
 
     def get_total_row_count(self) -> int:
