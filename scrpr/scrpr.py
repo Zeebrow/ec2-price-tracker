@@ -1,6 +1,7 @@
 import time
 import csv
 import datetime
+from dateutil import tz
 from pathlib import Path
 from math import floor
 from typing import List, Tuple, Dict, Any, Optional
@@ -29,10 +30,11 @@ from uuid import uuid1
 from contextlib import contextmanager
 import dotenv
 from collections import OrderedDict
-import psutil
 import json
 import re
 import warnings
+from textwrap import dedent
+
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -41,6 +43,7 @@ from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.common import action_chains
 from selenium import webdriver
 from selenium.webdriver.remote.command import Command
+from selenium.common import exceptions as selenium_exception
 import psycopg2
 from psycopg2.errors import UniqueViolation
 from psycopg2 import sql
@@ -233,7 +236,6 @@ class ThreadDivvier:
                 daemon=False,
             )
             next_id += 1
-
             t.start()
             # always the same as the one below
             # logger.critical(f"\033[44m{psutil.Process(t.native_id).memory_full_info().rss=}\033[0m")
@@ -260,7 +262,8 @@ class ThreadDivvier:
         Items in the arg_queue are removed as work is completed, until there are no items left in the queue.
         """
         logger.debug(f"running {self.thread_count} threads")
-        _arg_queue = copy(arg_queue)  # feels wrong to pop from a queue that might could be acessed outside of func
+        # _arg_queue = copy(arg_queue)  # feels wrong to pop from a queue that might could be acessed outside of func
+        _arg_queue = arg_queue
         logger.debug("Test to make sure drivers are not locked...")
         for d in self.drivers:
             assert not d.lock.locked()
@@ -344,7 +347,6 @@ class DataCollector:
 
 
 class EC2DataCollectionElementBase:
-    # def __init__(self, driver: WebDriver, iframe: WebElement) -> None:
     def __init__(self, driver: WebDriver) -> None:
         self.driver = driver
         self.waiter = WebDriverWait(self.driver, 3.0)
@@ -352,22 +354,24 @@ class EC2DataCollectionElementBase:
 
     def _get_data_selection_root(self):
         """ Speeds up find_element(s) operations by minimizing the surface area to scrape.  """
+        self.waiter.until(ec.visibility_of_element_located((By.XPATH, "//*[@data-selection-root]")))
         return self.driver.find_element(By.XPATH, "//*[@data-selection-root]")
 
 
 class EC2Table(EC2DataCollectionElementBase):
-
     def __init__(self, driver: WebDriver) -> None:
         super().__init__(driver)
         self.header = Header(driver)
         self.rows = Rows(driver)
 
-    def get_current_page(self) -> int:
+    def get_current_page_number(self) -> int:
         """ requires switching to iframe """
         return int(self.data_selection_root.find_element(By.XPATH, ".//li/button[@aria-current='true']").text)
 
     def get_total_pages(self) -> int:
         """ requires switching to iframe """
+        # a = self.waiter.until(ec.staleness_of((By.XPATH, './/ul/li[last()-1]')))
+        # print(a.text)
         return int(self.data_selection_root.find_element(By.XPATH, './/ul/li[last()-1]').text)
 
     def navto_first_page(self) -> None:
@@ -375,7 +379,11 @@ class EC2Table(EC2DataCollectionElementBase):
         self.data_selection_root.find_element(By.XPATH, './/ul/li[2]').click()
 
     def navto_next_page(self) -> None:
-        """ requires switching to iframe """
+        """
+        requires switching to iframe
+
+        clicking when on second-to-last page will cause the button to change
+        """
         self.data_selection_root.find_element(By.XPATH, './/ul/li[last()]').click()
 
 
@@ -398,19 +406,17 @@ class Rows(EC2DataCollectionElementBase):
 
     def get_rows(self) -> List[WebElement]:
         """requires switching to iframe"""
-        logger.debug("waiting for rows...")
-        self.waiter.until(ec.visibility_of_all_elements_located((By.XPATH, './/table/tbody/tr')))
-        logger.debug("done")
-        return [tr for tr in self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')]
+        trs = self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')
+        for tr in trs:
+            yield tr
 
     def get_total_row_count(self) -> int:
         """requires switching to iframe"""
-        row_count_re = re.compile(r'([0-9]{1,3}) available instances$')
-        return [int(b.groups()[0]) if (b := row_count_re.search(self.data_selection_root.find_element(By.XPATH, './/h2/span').text)) is not None else -1][0]
-
-    def get_rows_count_on_page(self) -> int:
-        """requires switching to iframe"""
-        return len([tr for tr in self.data_selection_root.find_elements(By.XPATH, './/table/tbody/tr')])
+        t = self.data_selection_root.find_element(By.XPATH, './/h2/span').text
+        row_count_re = re.compile(r'(?P<row_count>[0-9]{1,3}) available instances$')
+        b = row_count_re.search(t)
+        if b is not None:
+            return int(b.groupdict()['row_count'])
 
 
 class EC2Dropdown:
@@ -419,20 +425,26 @@ class EC2Dropdown:
         self.analytics_element: Optional[WebElement] = None
         self.button: Optional[WebElement] = None
         self.options: List[str] = []
+        self.waiter = WebDriverWait(self.driver, 3.0)
 
     def current_value(self):
         return self.button.text
 
     def select(self, selection: str, delay: Optional[float] = None) -> None:
+        """screen-covering operation"""
         logger.debug("{} '{}'".format(self.__class__.__name__, selection))
         try:
             self.button.click()
+            # self.waiter.until(ec.element_to_be_clickable((By.XPATH, './/ul[@role="listbox"]/li')))
             if delay is not None:
-                time.sleep(delay)
+                time.sleep(delay/2)
             lis = self.analytics_element.find_elements(By.XPATH, './/ul[@role="listbox"]/li')
             for li in lis:
                 if selection in li.text:
                     li.click()
+                    if delay is not None:
+                        time.sleep(delay/2)
+                    # self.waiter.until(ec.invisibility_of_element((By.XPATH, './/ul[@role="listbox"]/li')))
                     break
             return
 
@@ -441,7 +453,7 @@ class EC2Dropdown:
             logger.error(e)
             # @@ do we need to raise?
             # note removed try/catch in collect_ec2_data()
-            raise
+            # raise
 
 class EC2LocationType(EC2Dropdown):
     def __init__(self, driver: WebDriver):
@@ -478,16 +490,16 @@ class EC2DataCollector(DataCollector):
         if _test_driver is None:
             self.prep_driver()
 
-        self.driver.switch_to.frame(self.iframe)
-        self.table = EC2Table(self.driver)
+            self.driver.switch_to.frame(self.iframe)
+            self.table = EC2Table(self.driver)
 
-        self.region_dropdown = None
-        self.instance_type_dropdown = None
-        self.operating_system_dropdown = None
-        self.location_type_dropdown = None
-        self.cpu_dropdown = None
-        self.get_dropdown_menus()
-        self.driver.switch_to.default_content()
+            self.region_dropdown = None
+            self.instance_type_dropdown = None
+            self.operating_system_dropdown = None
+            self.location_type_dropdown = None
+            self.cpu_dropdown = None
+            self.get_dropdown_menus()
+            self.driver.switch_to.default_content()
 
         self.lock.release()
 
@@ -507,7 +519,6 @@ class EC2DataCollector(DataCollector):
         except Exception as e:  # pragma: no cover
             logger.critical("While initializing worker '{}', an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, e), exc_info=True)
             self.driver.quit()
-            raise ScrprCritical("While initializing worker '{}', an exception occurred which requires closing the Selenium WebDriver: {}")
 
     def _get_data_analytics_divs(self) -> List[WebElement]:
         """
@@ -689,89 +700,67 @@ class EC2DataCollector(DataCollector):
         """
         Select an operating system and region to fill the pricing page table with data, scrape it, and save it to a csv file.
         CSV files are saved in a parent directory of self.csv_data_dir, by date then by operating system. e.g. '<self.csv_data_dir>/2023-01-18/Linux'
-        NOTE: contains try/catch for self.driver
-        NOTE: switches to iframe
-
-        NOTE: Fails for small browser sizes
-
-        _os: Operating System name offered by AWS
-        region: AWS region name
-
-        raises: ScrprCritical
         """
 
         global ROWS_COLLECTED
         self.driver.switch_to.frame(self.iframe)
-        # delay = 0.5
-        # # voodoo
-        # logger.debug("{} scrolling table into view...".format(self._id))
-        # self.scroll(self.table.header.element.location['y'])
-        # self.scroll(self.table.header.element.size['height'] * 4)
-        # time.sleep(delay)
-        delay = 0.2  # voodoo
+
         logger.debug(f"{self._id} scrape all: {region=} {_os=}")
+
         try:
-            rtn: List[PGInstance] = []
+            logger.debug(f"before nav to first page: {self.table.get_current_page_number()}")
+            # for some reason, pages like to start > 1... so this works around...
+            self.table.navto_first_page()
+            logger.debug(f"after nav to first page: {self.table.get_current_page_number()}")
 
             # set table filters appropriately
-            self.operating_system_dropdown.select(_os, delay=delay)
-            self.region_dropdown.select(region, delay=delay)
+
+            # @@@ retry these with delay = 0
+            # only thing that doesnt throw see is sleep in here.
+            self.operating_system_dropdown.select(_os, delay=2)
+            self.region_dropdown.select(region, delay=2)
 
             num_pages = self.table.get_total_pages()
+            total_row_count = self.table.rows.get_total_row_count()
             validation_rows_scraped_per_page = {}
-            logger.debug(f"before nav to first page: {self.table.get_current_page()}")
-            # for some reason, pages like to start at 4 instead of 1, so we call this to make sure
-            self.table.navto_first_page()
-            logger.debug(f"after nav to first page: {self.table.get_current_page()}")
 
-            logger.info("{} scraping {} rows on {} pages for os: {} region {}...".format(self._id, self.table.rows.get_total_row_count(), num_pages, _os, region))
-            row_ct = 0
-            logger.debug(f"total row count: {self.table.rows.get_total_row_count()}")
+            logger.info("{} scraping {} rows on {} pages for os: {} region {}...".format(self._id, total_row_count, num_pages, _os, region))
+            logger.debug(f"total row count: {total_row_count}")
 
+            trc = 0
+            tdc = 0
             for i in range(num_pages):
-                # logger.debug(f"scraping page {self.table['get_current_page']()}")  # trace
                 # navto next page only after the initial page is marshalled
+                page_rows = []
                 if i > 0:
-                    # logger.debug("{} clicking 'next' button".format(self._id))  # trace
+                    logger.trace("{} clicking 'next' button".format(self._id))
                     self.table.navto_next_page()
+                    time.sleep(0.5)  # voodo
 
-                validation_current_page = self.table.get_current_page()
-                logger.debug(f"current page: {validation_current_page}")
-                logger.debug(f"rows on page: {self.table.rows.get_rows_count_on_page()}")
+                validation_current_page = self.table.get_current_page_number()
                 validation_rows_scraped_per_page[validation_current_page] = 0
-                # logger.debug("current page: {}".format(validation_current_page))  # trace
+                logger.trace("current page: {}".format(validation_current_page))
 
                 # exctract data from rows displayed
                 for row in self.table.rows.get_rows():
-                    row_ct += 1
-                    validation_rows_scraped_per_page[validation_current_page] += 1
-                    instance_props = []
-                    for col in row.find_elements(By.XPATH, './/td'):
-                        instance_props.append(col.text)
-                    rtn.append(PGInstance(self.human_date, region, _os, *instance_props))  # i hate my code
-                time.sleep(0.1)
+                    trc += 1
+                    row_data = []
+                    for td in row.find_elements(By.XPATH, './/td'):
+                        tdc += 1
+                        row_data.append(td.text)
+                    page_rows.append(row_data)
 
-            #################
-            # validation
-            #################
-            actual_rows_count = sum([int(v) for _, v in validation_rows_scraped_per_page.items()])
-            logger.debug(f"row count from summing page items: {actual_rows_count=}")
-            logger.debug(f"row count from iterating: {row_ct=}")
-            # requires risking introducing more errors, nah
-            # actual_pages_count = max(validation_rows_scraped_per_page.keys())
-            if actual_rows_count != len(rtn):
-                logger.error("scraped {} rows, but returning {}!".format(
-                    actual_rows_count, len(rtn)
-                ))
-            logger.debug("{} resetting viewport before returning...".format(self._id))
+                yield page_rows
             self.scroll(-10000)
+            time.sleep(1)  # is snappy
             self.driver.switch_to.default_content()
-            ROWS_COLLECTED += len(rtn)
-            return rtn
+            return 
 
         except Exception as e:  # pragma: no cover
+            print('ception?')
             logger.critical("worker {}: While scraping os '{}' for region '{}'. an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, _os, region, e), exc_info=True)
-            # raise ScrprCritical("worker {}: While scraping os '{}' for region '{}'. an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, _os, region, e))
+        finally:
+            print('still doesnt exit')
 
     def store_postgres(self, instances: List[PGInstance], table='ec2_instance_pricing') -> Tuple[int, int]:
         """
@@ -781,13 +770,18 @@ class EC2DataCollector(DataCollector):
         """
         global ROWS_ALREADY_EXISTED
         error_count = 0
+        # squash a bunch of warnings into one
         already_existed_count = 0
         stored_count = 0
+        logger.trace(type(instances))
+        if len(instances) == 0:
+            logger.error("No instances to store! got: {}".format(type(instances)))
+            return 0, 1
+            
         with self.get_db() as conn:
             for instance in instances:
                 try:
-                    stored_new_data = instance.store(conn, table=table)
-                    if stored_new_data:
+                    if instance.store(conn, table=table):
                         stored_count += 1
                     else:
                         already_existed_count += 1
@@ -796,7 +790,6 @@ class EC2DataCollector(DataCollector):
                     logger.error("An unhandled exception occured while attempting to write data to database: {}".format(e))
                     error_count += 1
                     conn.commit()
-        # squash a bunch of warnings into one
         if already_existed_count:
             logger.warning("{} records already existed in database and were not stored".format(already_existed_count))
             ROWS_ALREADY_EXISTED += already_existed_count
@@ -875,86 +868,73 @@ class EC2DataCollector(DataCollector):
         NOTE: contains try/catch for self.driver
         """
         global ROWS_STORED
-        t_thread_start = int(time.time())
+        # t_thread_start = int(time.time())
         logger.debug(f"{self._id} scrape and store: {region=} {_os=}")
         ################# # Scrape #################
-        instances: List[PGInstance] = self.collect_ec2_data(_os=_os, region=region)
-
+        # instances: List[PGInstance] = self.collect_ec2_data(_os=_os, region=region)
+        # instances: List[PGInstance] = []
+        stored_count = 0
+        already_existed_count = 0
+        error_count = 0
         try:
-            ################# # Postgres #################
-            if self.db_config is not None:  # @@@ when is self.db_config ever None?
-                stored_count, error_count = self.store_postgres(instances)
-                ROWS_STORED += stored_count
-                if error_count > 0:
-                    logger.warning("{} stored {}/{} records for {}: {} with {} errors.".format(self._id, stored_count, len(instances), region, _os, error_count))
-                else:
-                    logger.debug("{} stored {}/{} records for {}: {} with {} errors.".format(self._id, stored_count, len(instances), region, _os, error_count))
-            else:
-                logger.debug("{} skip saving to database".format(self._id))
-
-            ################# # CSV #################
-            if self.csv_data_dir is not None:
-                stored_count, error_count = self.save_csv(region, _os, instances)
-                logger.debug("{} saved {}/{} csv rows for {}: {} with {} errors.".format(self._id, stored_count, len(instances), region, _os, error_count))
-            else:
-                logger.debug("{} skip saving to csv file".format(self._id))
-
-            t_run = int(time.time() - t_thread_start)
-            _THREAD_RUN_TIMES.append({
-                'id': '-'.join([self.human_date, region, _os]),
-                'num_instances': len(instances),
-                't_run': t_run
-            })
-            self.lock.release()
-            return True
-
+            with self.get_db() as conn:
+                for page_row in self.collect_ec2_data(_os=_os, region=region):
+                    for data_row in page_row:
+                        try:
+                            i = PGInstance(self.human_date, region, _os, *data_row)
+                            if i.store(conn):
+                                stored_count += 1
+                            else:
+                                already_existed_count += 1
+                                error_count += 1
+                        except Exception as e:  # pragma: no cover
+                            logger.error("An unhandled exception occured while attempting to write data to database: {}".format(e))
+                            error_count += 1
+                            conn.commit()
+                # self.store_postgres(data_row)
         except Exception as e:  # pragma: no cover
             logger.critical("worker {}: While storing data for os '{}' for region '{}', an exception occurred which may result in dataloss: {}".format(self._id, _os, region, e), exc_info=True)
-            _THREAD_RUN_TIMES.append({
-                'id': '-'.join(["ERROR", self.human_date, region, _os]),
-                'num_instances': len(instances),
-                't_run': int(time.time() - t_thread_start)
-            })
+            # raise ScrprException("worker {}: While storing data for os '{}' for region '{}', an exception occurred which may result in dataloss: {}".format(self._id, _os, region, e))
+        finally:
             self.lock.release()
-            raise ScrprException("worker {}: While storing data for os '{}' for region '{}', an exception occurred which may result in dataloss: {}".format(self._id, _os, region, e))
 
-    # @@@ unused
-    def get_result_count_test(self) -> int:
-        """
-        get the 'Viewing ### of ### Available Instances' count to check our results
-        NOTE: contains try/catch for self.driver
-        NOTE: switches to iframe
-        """
-        logger.debug("{} get results count".format(self._id))
-        try:
-            self.driver.switch_to.frame(self.iframe)
-            t = self.driver.find_element(By.CLASS_NAME, 'awsui-table-header').find_element(By.TAG_NAME, "h2").text
-            # ¯\_(ツ)_/¯
-            self.driver.switch_to.default_content()
-        except Exception as e:  # pragma: no cover
-            self.driver.quit()
-            logger.error("{} error getting number of results: {}".format(self._id, e), exc_info=True)
-            raise e
-        return int(t.split("of")[1].split(" available")[0].strip())
 
-    # @@@ unused
-    def wait_for_menus_to_close(self):
-        """
-        Blocks until any of the clickable dialog boxes in this script have returned to a collapsed state before returning.
-        NOTE: contains try/catch for self.driver
-        NOTE: might not do anything
-        """
-        try:
-            dropdown_buttons = self.driver.find_elements(By.XPATH, '//*[@data-open]')
-            for db in dropdown_buttons:
-                if db.get_attribute('data-open') == "true":
-                    logger.warning("Drop-down menu is still visible ")
-            return
+            ################# # Postgres #################
+        #     if self.db_config is not None:  # @@@ when is self.db_config ever None?
+        #         stored_count, error_count = self.store_postgres(instances)
+        #         ROWS_STORED += stored_count
+        #         if error_count > 0:
+        #             logger.warning("{} stored {}/{} records for {}: {} with {} errors.".format(self._id, stored_count, len(instances), region, _os, error_count))
+        #         else:
+        #             logger.debug("{} stored {}/{} records for {}: {} with {} errors.".format(self._id, stored_count, len(instances), region, _os, error_count))
+        #     else:
+        #         logger.debug("{} skip saving to database".format(self._id))
 
-        except Exception as e:  # pragma: no cover
-            self.driver.quit()
-            logger.error("{} Error waiting for menus to close: {}".format(self._id, e), exc_info=True)
-            raise e
+        #     ################# # CSV #################
+        #     if self.csv_data_dir is not None:
+        #         stored_count, error_count = self.save_csv(region, _os, instances)
+        #         logger.debug("{} saved {}/{} csv rows for {}: {} with {} errors.".format(self._id, stored_count, len(instances), region, _os, error_count))
+        #     else:
+        #         logger.debug("{} skip saving to csv file".format(self._id))
+
+        #     t_run = int(time.time() - t_thread_start)
+        #     _THREAD_RUN_TIMES.append({
+        #         'id': '-'.join([self.human_date, region, _os]),
+        #         'num_instances': len(instances),
+        #         't_run': t_run
+        #     })
+        #     self.lock.release()
+        #     return True
+
+        # except Exception as e:  # pragma: no cover
+        #     logger.critical("worker {}: While storing data for os '{}' for region '{}', an exception occurred which may result in dataloss: {}".format(self._id, _os, region, e), exc_info=True)
+        #     _THREAD_RUN_TIMES.append({
+        #         'id': '-'.join(["ERROR", self.human_date, region, _os]),
+        #         'num_instances': len(instances),
+        #         't_run': int(time.time() - t_thread_start)
+        #     })
+        #     self.lock.release()
+        #     raise ScrprException("worker {}: While storing data for os '{}' for region '{}', an exception occurred which may result in dataloss: {}".format(self._id, _os, region, e))
 
     @contextmanager
     def get_db(self):
@@ -979,9 +959,8 @@ def compress_data(csv_data_dir: str, data_type_scraped: str, human_date: str, rm
     """Save data to a zip archive immediately under data_dir instead of saving directory tree"""
     errors = False
     csv_data_tree = Path(f"{csv_data_dir}") / data_type_scraped / human_date
-    assert csv_data_tree.exists()
     logger.debug("compressing data in '{}'".format(csv_data_tree.absolute()))
-    old_cwd = os.getcwd()  # @@@ jank ???
+    old_cwd = os.getcwd()
     os.chdir(Path(csv_data_dir) / data_type_scraped)
     bkup_zip_file = Path(f"{human_date}.bkup-{uuid1()}.zip")
     if Path(f"{human_date}.zip").exists():
@@ -1124,17 +1103,12 @@ def get_data_dir_size(data_dir=DEFAULT_CSV_DATA_DIR) -> int:
     s = 0
     try:
         for base in os.walk(data_dir):
-            # add files' sizes
             for d2 in base[2]:
-                # print(Path(os.path.join(base[0], d2)).absolute(), Path(os.path.join(base[0], d2)).stat().st_size)
                 s += Path(os.path.join(base[0], d2)).stat().st_size
-            # traverse subdirectories
             if base[1]:
                 for d1 in base[1]:
-                    # print(Path(os.path.join(base[0], d1)).absolute(), Path(os.path.join(base[0], d1)).stat().st_size)
                     s += Path(os.path.join(base[0], d1)).stat().st_size
                     s += get_data_dir_size(os.path.join(base[0], d1))
-            # nothing left to do
             else:
                 return s
             return s
@@ -1157,8 +1131,7 @@ def get_table_size(db_config: DatabaseConfig, table='ec2_instance_pricing') -> i
         curr.execute(s)
         r = curr.fetchone()
         if r is None:
-            logger.error("Couldn't get table size data. Check your db_config.")
-            raise ScrprException("Couldn't get table size data. Check your db_config.")
+            logger.error("Couldn't get table size data - check your db_config.")
         size_bytes = r[0]
         conn.close()
         logger.debug("'{}' table is {:.2f} Mb ({} bytes)".format(
@@ -1171,7 +1144,7 @@ def get_table_size(db_config: DatabaseConfig, table='ec2_instance_pricing') -> i
 
 
 @dataclass
-class MainConfig:
+class RunArgs:
     """
     Required arguments to run main()
     These are provided as a Namespace by do_args()
@@ -1225,28 +1198,28 @@ class MetricData:
 
     @command_line.setter
     def command_line(self, cl):
-        if isinstance(cl, MainConfig):
+        if isinstance(cl, RunArgs):
             self._command_line = cl.__dict__
         elif isinstance(cl, dict):
             try:
-                self._command_line = MainConfig(**cl).__dict__
+                self._command_line = RunArgs(**cl).__dict__
             except Exception:
                 logger.error("MetricData validation error")
-                self._command_line = MainConfig(
+                self._command_line = RunArgs(
                     follow=False,
                     thread_count=-1,
                     overdrive_madness=False,
                     compress=False,
-                    regions=["MainConfig validation error"],
-                    operating_systems=["MainConfig validation error"],
+                    regions=["RunArgs validation error"],
+                    operating_systems=["RunArgs validation error"],
                     get_operating_systems=False,
                     get_regions=False,
                     store_csv=False,
                     store_db=False,
                     v=-1,
                     check_size=False,
-                    log_file="MainConfig validation error",
-                    csv_data_dir="MainConfig validation error",
+                    log_file="RunArgs validation error",
+                    csv_data_dir="RunArgs validation error",
                 ).__dict__
 
     def as_dict(self):
@@ -1301,19 +1274,51 @@ class MetricData:
             return False
 
 
-def init_logging(verbosity: int, follow: bool, log_file: str | Path | None):
+def init_logging(verbosity: int, follow: bool, log_file: Optional[str | Path] = DEFAULT_LOG_FILE):
+    print(verbosity)
     logger = logging.getLogger()
+
     logging.getLogger('selenium.*').setLevel(logging.WARNING)
     logging.getLogger('selenium.webdriver.remote.remote_connection').setLevel(logging.WARNING)
     logging.getLogger('urllib3').setLevel(logging.WARNING)
-    if log_file is None:
-        log_file = DEFAULT_LOG_FILE
-    if verbosity == 0:
-        logger.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(message)s')
-    else:
-        logger.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(name)s : %(threadName)s (%(thread)s) : %(funcName)s : %(message)s')
+
+    #########
+    # @@@ tomfoolry
+    # logging.TRACE = logging.DEBUG - 5
+    logging.TRACE = 5
+    if hasattr(logging, 'TRACE'):
+        print('aaah')
+    if hasattr(logging, 'trace'):
+        print('aaah')
+    if hasattr(logging.getLoggerClass(), 'trace'):
+        print('aaah')
+    print(logging._nameToLevel)
+    def trace(self, message, *args, **kwargs):
+        if self.isEnabledFor(logging.TRACE):
+            self._log(5, message, args, **kwargs)
+    def log_to_root(message, *args, **kwargs):
+        logging.log(5, message, *args, **kwargs)
+
+    logging.addLevelName(5, 'TRACE')
+    setattr(logging, 'TRACE', 5)
+    setattr(logging.getLoggerClass(), 'trace', trace)
+    setattr(logging, 'trace', log_to_root)
+    #########
+
+    match verbosity:
+        case 0:
+            logger.setLevel(logging.WARNING)
+            formatter = logging.Formatter('%(levelname)s : %(message)s')
+        case 1:
+            logger.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(message)s')
+        case 2:
+            logger.setLevel(logging.DEBUG)
+            formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(name)s : %(threadName)s : %(funcName)s : %(message)s')
+        case _:
+            logger.setLevel(logging.TRACE)
+            formatter = logging.Formatter('%(asctime)s : %(levelname)s : %(name)s : %(threadName)s (%(thread)s) : %(funcName)s : %(message)s')
+    
     if follow:
         sh = logging.StreamHandler()
         sh.setFormatter(formatter)
@@ -1325,6 +1330,8 @@ def init_logging(verbosity: int, follow: bool, log_file: str | Path | None):
     )
     fh.setFormatter(formatter)
     logger.addHandler(fh)
+    print(logger.level)
+    logger.trace("logging set")
 
     return logger
 
@@ -1333,20 +1340,22 @@ def get_date():
     """
     Get an unaware datestamp for ID purposes..
     """
-    # @@@ tzinfo
-    return datetime.datetime.now()
+    return datetime.datetime.now(tz.UTC)
 
 
 def api_status_wrapper(f):
+    """Run a function that always returns the state to idle"""
     def wrapper(*args, **kwargs):
-        set_api_status("starting")
-        f(*args, **kwargs)
-        set_api_status("idle")
+        try:
+            set_api_status("starting")
+            f(*args, **kwargs)
+        finally:
+            set_api_status("idle")
     return wrapper
 
 
 @api_status_wrapper
-def main(args: MainConfig):  # noqa: C901
+def main(args: RunArgs):  # noqa: C901
     global ROWS_STORED, ROWS_COLLECTED
 
     t_main = time.time()
@@ -1368,7 +1377,6 @@ def main(args: MainConfig):  # noqa: C901
         log_file=args.log_file
     )
 
-    logger.warning("This program is still under development, log output may be ... less than scrupulous.")
     logger.info("Starting program with PID {}".format(os.getpid()))
     logger.debug("datestamp : {}".format(datestamp))
     logger.debug("human_date: {}".format(human_date))
@@ -1501,7 +1509,7 @@ def main(args: MainConfig):  # noqa: C901
     for o in tgt_oses:
         for r in tgt_regions:
             thread_tgts.append((o, r))
-    logger.debug("thread targets ({}) = {}".format(len(thread_tgts), thread_tgts))
+    logger.trace("thread targets ({}) = {}".format(len(thread_tgts), thread_tgts))
 
     metric_data.t_init = 0
     thread_thing = ThreadDivvier(thread_count=num_threads)
