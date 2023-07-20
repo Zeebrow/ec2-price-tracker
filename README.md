@@ -1,3 +1,25 @@
+# BROKEN! NOTICE!
+
+My dear followers: a few days ago I found invalid (amounts of) data being committed to Postgres.
+I seem to have a fix however, as part of a too-much-needed refactor, I require a few days time
+to validate stability in other important areas, namely consistency during non-ideal network
+conditions. 
+
+To elaborate, as it stands `scrpr` is not ready to me the automated service it was before the
+[AWS EC2 Pricing Page](https://aws.amazon.com/ec2/pricing/on-demand/) data-analytics refactor.
+I am questioning testing as a valid approach to Selenium script development (I am sure someone with
+experience would like the laugh!), and so have determined my efforts to use this project to learn more about
+`pytest` in general are best used elsewhere. `scrpr`'s purpose is to collect and store valid
+data, so I
+feel no shame in making [learning SQLAlchemy](https://docs.sqlalchemy.org/en/20/tutorial/) my
+new priority, to acknowledge what FastAPI has abstracted away from me. I will also look forward
+to investigating [Alembic](https://alembic.sqlalchemy.org/en/latest/) to enable seemless
+migration experience akin to what Django has to offer.
+
+
+- ducee
+
+
 # scrape cost data for ec2
 
 Use a headless Chrome browser to gather EC2 price info: <https://aws.amazon.com/ec2/pricing/on-demand/>
