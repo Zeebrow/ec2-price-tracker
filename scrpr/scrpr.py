@@ -749,6 +749,7 @@ class EC2DataCollector(DataCollector):
                         tdc += 1
                         row_data.append(td.text)
                     page_rows.append(row_data)
+                    ROWS_COLLECTED += 1
 
                 yield page_rows
             self.scroll(-10000)
@@ -760,7 +761,9 @@ class EC2DataCollector(DataCollector):
             print('ception?')
             logger.critical("worker {}: While scraping os '{}' for region '{}'. an exception occurred which requires closing the Selenium WebDriver: {}".format(self._id, _os, region, e), exc_info=True)
         finally:
-            print('still doesnt exit')
+            # print('still doesnt exit')
+            # self.driver.switch_to.default_content()
+            pass
 
     def store_postgres(self, instances: List[PGInstance], table='ec2_instance_pricing') -> Tuple[int, int]:
         """
@@ -867,7 +870,7 @@ class EC2DataCollector(DataCollector):
         This function is meant to be run in a ThreadDivvier singleton.
         NOTE: contains try/catch for self.driver
         """
-        global ROWS_STORED
+        global ROWS_STORED, ROWS_ALREADY_EXISTED
         # t_thread_start = int(time.time())
         logger.debug(f"{self._id} scrape and store: {region=} {_os=}")
         ################# # Scrape #################
@@ -883,9 +886,9 @@ class EC2DataCollector(DataCollector):
                         try:
                             i = PGInstance(self.human_date, region, _os, *data_row)
                             if i.store(conn):
-                                stored_count += 1
+                                ROWS_STORED += 1
                             else:
-                                already_existed_count += 1
+                                ROWS_ALREADY_EXISTED += 1
                                 error_count += 1
                         except Exception as e:  # pragma: no cover
                             logger.error("An unhandled exception occured while attempting to write data to database: {}".format(e))
@@ -1275,7 +1278,6 @@ class MetricData:
 
 
 def init_logging(verbosity: int, follow: bool, log_file: Optional[str | Path] = DEFAULT_LOG_FILE):
-    print(verbosity)
     logger = logging.getLogger()
 
     logging.getLogger('selenium.*').setLevel(logging.WARNING)
@@ -1287,12 +1289,11 @@ def init_logging(verbosity: int, follow: bool, log_file: Optional[str | Path] = 
     # logging.TRACE = logging.DEBUG - 5
     logging.TRACE = 5
     if hasattr(logging, 'TRACE'):
-        print('aaah')
+        pass
     if hasattr(logging, 'trace'):
-        print('aaah')
+        pass
     if hasattr(logging.getLoggerClass(), 'trace'):
-        print('aaah')
-    print(logging._nameToLevel)
+        pass
     def trace(self, message, *args, **kwargs):
         if self.isEnabledFor(logging.TRACE):
             self._log(5, message, args, **kwargs)
@@ -1330,7 +1331,6 @@ def init_logging(verbosity: int, follow: bool, log_file: Optional[str | Path] = 
     )
     fh.setFormatter(formatter)
     logger.addHandler(fh)
-    print(logger.level)
     logger.trace("logging set")
 
     return logger
@@ -1526,13 +1526,13 @@ def main(args: RunArgs):  # noqa: C901
     # after data has been collected
     ##########################################################################
     set_api_status("cleaning up")
-    # argparsing
-    if args.compress and csv_data_dir:
-        compress_data(csv_data_dir, 'ec2', human_date, rm_tree=True)
+    # # argparsing
+    # if args.compress and csv_data_dir:
+    #     compress_data(csv_data_dir, 'ec2', human_date, rm_tree=True)
 
-    # argparsing
-    if args.store_csv:
-        metric_data.s_csv = get_data_dir_size(csv_data_dir) - s_csv_start
+    # # argparsing
+    # if args.store_csv:
+    #     metric_data.s_csv = get_data_dir_size(csv_data_dir) - s_csv_start
 
     # argparsing
     if args.store_db:
@@ -1557,34 +1557,34 @@ def main(args: RunArgs):  # noqa: C901
     for n, e in enumerate(ERRORS):
         logger.error("{}) {}".format(n+1, e))
     logger.debug('-----------------sanity check----------------------')
-    logger.debug(f"{ROWS_COLLECTED=}")
-    logger.debug(f"{ROWS_STORED=}")
-    logger.debug(f"{ROWS_ALREADY_EXISTED=}")
+    logger.info(f"{ROWS_COLLECTED=}")
+    logger.info(f"{ROWS_STORED=}")
+    logger.info(f"{ROWS_ALREADY_EXISTED=}")
     logger.info(f"{ROWS_STORED + ROWS_ALREADY_EXISTED == ROWS_COLLECTED=}")
 
-    conn = psycopg2.connect(db_config.get_dsl())
-    curr = conn.cursor()
-    metric_store_errors = 0
-    # Store run time of each thread
-    # TODO: use floats
-    # "id"                                          "t_run" "num_instances" "datetime_utc"
-    # "2023-03-07-eu-south-2-Windows with SQL Web"	74	    21	            "2023-03-07 05:49:17.782281"
-    for thread_run_time in _THREAD_RUN_TIMES:
-        try:
-            curr.execute("INSERT INTO ec2_thread_times VALUES (%s, %s, %s, %s)",
-                (thread_run_time['id'], thread_run_time['num_instances'],
-                    thread_run_time['t_run'], datestamp)
-            )
-            conn.commit()
-        except UniqueViolation:
-            metric_store_errors += 1
-            conn.commit()
-            continue
-        except Exception:
-            logger.error("misconfigured thread_run_times!")
-    if metric_store_errors > 1:
-        logger.error("failed to store")
-    conn.close()
-    with open('1999-01-01' + "-thread-metrics-" + ".txt", 'a') as f:
-        for thread_run_time in _THREAD_RUN_TIMES:
-            csv.DictWriter(f, fieldnames=['id', 'num_instances', 't_run'], delimiter='\t').writerow(thread_run_time)
+    # conn = psycopg2.connect(db_config.get_dsl())
+    # curr = conn.cursor()
+    # metric_store_errors = 0
+    # # Store run time of each thread
+    # # TODO: use floats
+    # # "id"                                          "t_run" "num_instances" "datetime_utc"
+    # # "2023-03-07-eu-south-2-Windows with SQL Web"	74	    21	            "2023-03-07 05:49:17.782281"
+    # for thread_run_time in _THREAD_RUN_TIMES:
+    #     try:
+    #         curr.execute("INSERT INTO ec2_thread_times VALUES (%s, %s, %s, %s)",
+    #             (thread_run_time['id'], thread_run_time['num_instances'],
+    #                 thread_run_time['t_run'], datestamp)
+    #         )
+    #         conn.commit()
+    #     except UniqueViolation:
+    #         metric_store_errors += 1
+    #         conn.commit()
+    #         continue
+    #     except Exception:
+    #         logger.error("misconfigured thread_run_times!")
+    # if metric_store_errors > 1:
+    #     logger.error("failed to store")
+    # conn.close()
+    # with open('1999-01-01' + "-thread-metrics-" + ".txt", 'a') as f:
+    #     for thread_run_time in _THREAD_RUN_TIMES:
+    #         csv.DictWriter(f, fieldnames=['id', 'num_instances', 't_run'], delimiter='\t').writerow(thread_run_time)

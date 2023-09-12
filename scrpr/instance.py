@@ -4,11 +4,13 @@ from collections import OrderedDict
 from typing import Tuple
 import logging
 
+import sqlalchemy
+
 logger = logging.getLogger(__name__)
 
 
 # @@@ What is the point of having an 'Instance' type ?
-# Introducing SQLAlchemy! The last Python framework you'll ever need!
+# Introducing SQLAlchemy!
 class Instance(object):
     __slots__ = ("datestamp", "region", "operating_system", "instance_type", "cost_per_hr", "cpu_ct", "ram_size", "storage_type", "network_throughput")
 
@@ -62,11 +64,10 @@ class PGInstance(Instance):
     def __init__(self, datestamp: str, region: str, operating_system: str, instance_type: str, cost_per_hr: str, cpu_ct: str, ram_size: str, storage_type: str, network_throughput: str) -> None:
         super().__init__(datestamp, region, operating_system, instance_type, cost_per_hr, cpu_ct, ram_size, storage_type, network_throughput)
 
-    def store(self, conn, table='ec2_instance_pricing'):
+    def store(self, conn, table='ec2_instance_pricing') -> bool:
         """
         Throws UniqueViolation, caught in scrpr.DataCollector.store_postgres()
         """
-        success = True
         curr = conn.cursor()
         ins = sql.SQL("""
             INSERT INTO {table} (pk, date, instance_type, operating_system, region, cost_per_hr, cpu_ct, ram_size_gb, storage_type, network_throughput)
@@ -75,11 +76,12 @@ class PGInstance(Instance):
         try:
             curr.execute(ins, ('-'.join([self.datestamp, self.region, self.operating_system, self.instance_type]), *self.prep_data()))
         except UniqueViolation:
-            success = False
+            # "a finally clause is always executed before leaving the try statement"
+            return False
         finally:
             conn.commit()
             curr.close()
-        return success
+        return True
 
     # @@ might could move to Instance
     def prep_data(self) -> Tuple[str, str, str, str, float, int, float, str, str]:
@@ -98,3 +100,5 @@ class PGInstance(Instance):
             ready_data["storage_type"],
             ready_data["network_throughput"],
         )
+
+
