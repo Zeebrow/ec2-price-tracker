@@ -329,6 +329,28 @@ class DataCollector:
         logger.debug("Finished init of thread {} without errors".format(self._id))
         self.lock.release()
 
+    @classmethod
+    def version_check(cls, browser_binary='/usr/bin/google-chrome', automation_driver='/usr/local/bin/chromedriver', headless=True, window_w=1920, window_h=1080) -> bool:
+        """
+        check the chromedriver and Chrome browser versions for compatability.
+        """
+        options = webdriver.ChromeOptions()
+        options.binary_location = browser_binary
+        options.add_argument('-headless')
+        driverService = Service(automation_driver)
+        driver = webdriver.Chrome(service=driverService, options=options)
+        browser_version = driver.capabilities['browserVersion']
+        driver_version = driver.capabilities['chrome']['chromedriverVersion']
+        logger.debug("Chrome browser version: %s", browser_version)
+        logger.debug("Chromedriver version: %s", driver_version)
+        if not (browser_version.split('.')[0] != driver_version.split('.')[0]):
+            logger.error("!!! Version mismatch !!!")
+            logger.error("Chrome browser version: %s\nfrom %s\n", browser_version, browser_binary)
+            logger.error("Chromedriver version: %s\nfrom %s", driver_version, automation_driver)
+            logger.error("You can download the latest version of Chromedriver from https://googlechromelabs.github.io/chrome-for-testing/")
+            return False
+        return True
+
     def get_driver(self, browser_binary='/usr/bin/google-chrome', automation_driver='/usr/local/bin/chromedriver', headless=True, window_w=1920, window_h=1080):
         options = webdriver.ChromeOptions()
         options.binary_location = browser_binary
@@ -891,7 +913,7 @@ class EC2DataCollector(DataCollector):
                                 ROWS_ALREADY_EXISTED += 1
                                 error_count += 1
                         except Exception as e:  # pragma: no cover
-                            logger.error("An unhandled exception occured while attempting to write data to database: {}".format(e))
+                            logger.error("worker {}: An unhandled exception occured afterscraping os '{}' in region '{}', while attempting to write data to database: {}".format(self._id, _os, region, e))
                             error_count += 1
                             conn.commit()
                 # self.store_postgres(data_row)
@@ -1022,6 +1044,9 @@ def do_args(sys_args):
         required=False,
         action='store_true',
         help="print logs to stdout in addition to the log file")
+    parser.add_argument("--no-headless-init",
+        action='store_true',
+        help="show the chrome window while performing the initial region/os lookup")
     parser.add_argument("--log-file",
         required=False,
         default=DEFAULT_LOG_FILE,
@@ -1166,6 +1191,7 @@ class RunArgs:
     check_size: bool
     log_file: str = DEFAULT_LOG_FILE
     csv_data_dir: str = DEFAULT_CSV_DATA_DIR
+    no_headless_init: bool = True
 
     def load(self):
         raise NotImplementedError
@@ -1443,8 +1469,12 @@ def main(args: RunArgs):  # noqa: C901
     ##########################################################################
     # regions and operating systems
     ##########################################################################
+    if not DataCollector.version_check():
+        raise SystemExit(1)
     set_api_status("collecting available regions and operating systems")
-    os_region_collector = EC2DataCollector('os_region_collector', config=config)
+    os_region_collector_config = copy(config)
+    os_region_collector_config.headless = not args.no_headless_init
+    os_region_collector = EC2DataCollector('os_region_collector', config=os_region_collector_config)
     tgt_oses = os_region_collector.operating_system_dropdown.options
     tgt_regions = os_region_collector.region_dropdown.options
     # argparsing
