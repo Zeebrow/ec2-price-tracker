@@ -343,7 +343,7 @@ class DataCollector:
         driver_version = driver.capabilities['chrome']['chromedriverVersion']
         logger.debug("Chrome browser version: %s", browser_version)
         logger.debug("Chromedriver version: %s", driver_version)
-        if not (browser_version.split('.')[0] != driver_version.split('.')[0]):
+        if browser_version.split('.')[0] != driver_version.split('.')[0]:
             logger.error("!!! Version mismatch !!!")
             logger.error("Chrome browser version: %s\nfrom %s\n", browser_version, browser_binary)
             logger.error("Chromedriver version: %s\nfrom %s", driver_version, automation_driver)
