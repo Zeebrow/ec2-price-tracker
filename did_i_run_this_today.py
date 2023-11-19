@@ -1,10 +1,9 @@
 import argparse
-import sys
 import psycopg2
 from psycopg2 import sql
 import datetime
-from collections import defaultdict
 import json
+import sys
 
 from scrpr.scrpr import DatabaseConfig, get_table_size, get_data_dir_size, DEFAULT_CSV_DATA_DIR, get_date, MetricData
 
@@ -145,41 +144,72 @@ def runtime_averages(env_file=".env"):
     -t
     report performance statistics
     """
-    threads = defaultdict(int)
-    # build map of # of threads in run -> num of times run w/ key thread count
     # columns
-    #  run_no |    date    | threads | oses | regions |       t_init       |       t_run        |  s_csv   |   s_db    | reported_errors | command_line
+    # threads | run_no | t_run_avg | t_run_hi | t_run_lo | diff
     query = sql.SQL("""\
-            SELECT threads, t_run
-            FROM {}
-            where (date != '1999-12-31') AND
-            s_csv != 0 AND s_db != 0 AND
-            (oses >= 16) AND (regions >= 20)
+            SELECT threads, COUNT(run_no) as num_runs, ROUND(AVG(t_run)) as t_run_avg, ROUND(MAX(t_run)) as t_run_hi, ROUND(MIN(t_run)) as t_run_lo, ROUND((MAX(t_run) - MIN(t_run))) as diff
+            FROM metric_data
+            WHERE date != '1999-12-31'
+            AND oses >= 16
+            AND regions >= 20
+            GROUP BY threads
             ORDER BY threads ASC
             """.format(table_name))
     conn = get_conn(env_file)
     cur = conn.cursor()
     cur.execute(query)
     r = cur.fetchall()
-    for n in r:
-        threads[n[0]] += 1
 
-    thread_time_sums = defaultdict(int)
-    runs_per_thread = defaultdict(int)
-    total_num_runs = len(r)
-    total_num_threads_run = 0
-    for row in r:
-        thread_time_sums[row[0]] += row[1]
-        runs_per_thread[row[0]] += 1
-        total_num_threads_run += row[0]
+    header = [
+        "thread ct  ",
+        "# runs  ",
+        "avg run time  ",
+        "hi run time  ",
+        "lo run time  ",
+        "hi - lo  ",
+    ]
+    table = [row for row in r]
+    table_print = []
+    table.insert(0, header)
+    cols = len(table[0])
 
-    print("threads in run\t# of runs\tavg. run time (sec)")
-    for thread_count, num_thread_runs in threads.items():
-        print("{}\t\t{}\t\t{:.2f}".format(thread_count, num_thread_runs, thread_time_sums[thread_count] / threads[thread_count]))
+    col_max_chars = []
+    for c in range(cols):
+        col_max_chars.append(max([len(str(f[c])) for f in table]))
 
-    print("------------------------------------------")
-    print("total number of runs: {}".format(total_num_runs))
-    print("avg. threads per run: {:.2f}".format(total_num_threads_run / total_num_runs))
+    for row in table:
+        print_row = []
+        for i, f in enumerate(row):
+            print_row.append(f'{str(f):{col_max_chars[i]}}')  # lmao
+        table_print.append(print_row)
+
+    WH_ON_BLU = '\033[44m'
+    WH_ON_L_BLU = '\033[104m'
+    WH_ON_GREY = '\033[100m'
+    NRML = '\033[0m'
+
+    line_ct = 0
+    for f in table_print:
+        line = ''.join(f)
+
+        # print header in different color
+        if line_ct == 0:
+            sys.stdout.write(f"{WH_ON_BLU}{line}{NRML}")
+        else:
+            if line_ct % 2:
+                sys.stdout.write(f"{WH_ON_GREY}{line}{NRML}")
+            else:
+                sys.stdout.write(line)
+        sys.stdout.write("\n")
+        line_ct += 1
+
+    sys.stdout.write("-" * len(''.join(table_print[0])))
+    sys.stdout.write("\n")
+    table.pop(0)
+    run_ct = sum([int(row[1]) for row in table ])
+    num_threads = sum([int(row[0]) * int(row[1]) for row in table ])
+    print("total number of runs: {}".format(run_ct))
+    print("avg. threads per run: {:.2f}".format(num_threads / run_ct))
 
 
 def print_table_sizes():
