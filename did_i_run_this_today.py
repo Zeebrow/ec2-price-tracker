@@ -12,7 +12,7 @@ from scrpr.scrpr import DatabaseConfig, get_table_size, get_data_dir_size, DEFAU
 # Globals
 ##############################
 
-table_name = 'metric_data'
+table_name = sql.SQL('metric_data')
 ec2_pricing_table = 'ec2_instance_pricing'
 
 
@@ -38,7 +38,7 @@ def weight(threads, oses, regions, t_run):
 
 
 def sortish(env_file=".env"):
-    query = sql.SQL("SELECT * FROM {} ".format(table_name))
+    query = sql.SQL("SELECT * FROM {} ").format(table_name)
 
     conn = get_conn(env_file)
     cur = conn.cursor()
@@ -57,7 +57,7 @@ def sortish(env_file=".env"):
 
 
 def did_i_run_this_tday(env_file=".env"):
-    query = sql.SQL("SELECT * FROM {} where date = '{}'".format(table_name, datetime.datetime.now().strftime("%Y-%m-%d")))
+    query = sql.SQL("SELECT * FROM {} where date = '{}'").format(table_name, sql.SQL(datetime.datetime.now().strftime("%Y-%m-%d")))
     conn = get_conn(env_file)
     cur = conn.cursor()
     cur.execute(query)
@@ -73,7 +73,7 @@ def did_i_run_this_tday(env_file=".env"):
 def display_for_threadcount(t, env_file=".env"):
     conn = get_conn(env_file)
     cur = conn.cursor()
-    query = sql.SQL("SELECT * FROM {} where threads = {} and date != '1999-12-31'".format(table_name, t))
+    query = sql.SQL("SELECT * FROM {} where threads = {} and date != '1999-12-31'").format(table_name, sql.SQL(t))
     cur.execute(query)
     r = cur.fetchall()
     _print_header()
@@ -82,48 +82,14 @@ def display_for_threadcount(t, env_file=".env"):
     return 0
 
 
-def _as_json(with_command_line=True, env_file=".env"):
-    """need to update db with proper json strings, without single quotes"""
-    conn = get_conn(env_file)
-    cur = conn.cursor()
-    query = sql.SQL("SELECT * FROM {} where date == '2023-05-02' ORDER BY threads ASC".format(table_name))
-    cur.execute(query)
-    r = cur.fetchall()
-    print(r)
-
-    for row in r:
-        cli = json.loads(row[10]),
-        yield {
-            "run_no": row[0],
-            "date": row[1],
-            "threads": row[2],
-            "oses": row[3],
-            "regions": row[4],
-            "t_init": row[5],
-            "t_run": row[6],
-            "s_csv": row[7],
-            "s_db": row[8],
-            "reported_errors": row[9],
-            "command_line": cli,
-        }
-
-
 def get_table_sizes(pprint=False, env_file=".env"):
     """
     returns [(table_name, table_size)]
     """
-#    tables = [
-#        'ec2_thread_times',
-#        'ec2_instance_types',
-#        'ec2_instance_pricing',
-#        'metric_data',
-#        'network_throughputs',
-#        'storage_types',
-#    ]
     if pprint:
-        q = "pg_size_pretty(pg_total_relation_size('public.'||a.table_name))"
+        q = sql.SQL("pg_size_pretty(pg_total_relation_size('public.'||a.table_name))")
     else:
-        q = "pg_total_relation_size('public.'||a.table_name)"
+        q = sql.SQL("pg_total_relation_size('public.'||a.table_name)")
     conn = get_conn(env_file)
     cur = conn.cursor()
     query = sql.SQL("""
@@ -132,10 +98,9 @@ def get_table_sizes(pprint=False, env_file=".env"):
             FROM information_schema.tables
             WHERE table_schema = 'public'
             ORDER BY table_name ASC
-        )a""".format(q))
+        )a""").format(q)
     cur.execute(query)
-    r = cur.fetchall()
-    for row in r:
+    for row in cur.fetchall():
         yield row
 
 
@@ -148,13 +113,13 @@ def runtime_averages(env_file=".env"):
     # threads | run_no | t_run_avg | t_run_hi | t_run_lo | diff
     query = sql.SQL("""\
             SELECT threads, COUNT(run_no) as num_runs, ROUND(AVG(t_run)) as t_run_avg, ROUND(MAX(t_run)) as t_run_hi, ROUND(MIN(t_run)) as t_run_lo, ROUND((MAX(t_run) - MIN(t_run))) as diff
-            FROM metric_data
+            FROM {}
             WHERE date != '1999-12-31'
             AND oses >= 16
             AND regions >= 20
             GROUP BY threads
             ORDER BY threads ASC
-            """.format(table_name))
+            """).format(table_name)
     conn = get_conn(env_file)
     cur = conn.cursor()
     cur.execute(query)
@@ -205,9 +170,16 @@ def runtime_averages(env_file=".env"):
 
     sys.stdout.write("-" * len(''.join(table_print[0])))
     sys.stdout.write("\n")
-    table.pop(0)
-    run_ct = sum([int(row[1]) for row in table ])
-    num_threads = sum([int(row[0]) * int(row[1]) for row in table ])
+
+    query2 = sql.SQL("""\
+        SELECT SUM(num_runs) as total_runs, SUM(num_runs * threads) as total_threads
+        FROM ({}) as a
+    """).format(query)
+    cur.execute(query2)
+    summary = cur.fetchall()
+
+    run_ct = summary[0][0]
+    num_threads = summary[0][1]
     print("total number of runs: {}".format(run_ct))
     print("avg. threads per run: {:.2f}".format(num_threads / run_ct))
 
